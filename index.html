@@ -291,15 +291,24 @@
 
                 <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                 <h3 className="font-semibold text-slate-800 mb-3">Add Bucket</h3>
-                <div className="flex flex-wrap gap-2">
-                    <input className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" placeholder="Name" value={newBucket.name} onChange={(e)=>setNewBucket({...newBucket,name:e.target.value})} />
-                    <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Amount" value={newBucket.budgeted} onChange={(e)=>setNewBucket({...newBucket,budgeted:e.target.value})} />
-                    <select className="border rounded px-2 py-1 text-sm w-full max-w-[110px]" value={newBucket.period} onChange={(e)=>setNewBucket({...newBucket,period:e.target.value})}>
-                    <option value="monthly">Monthly</option>
-                    <option value="weekly">Weekly</option>
-                    </select>
-                    <button onClick={addBucket} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-sm w-full sm:w-auto border border-emerald-800 shadow-lg">➕ Add</button>
-                </div>
+                <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={e => {e.preventDefault();addBucket();}}>
+                    <div className="flex flex-col gap-1 w-full max-w-[160px]">
+                        <label className="text-xs text-slate-600 font-medium">Name</label>
+                        <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Name" value={newBucket.name} onChange={(e)=>setNewBucket({...newBucket,name:e.target.value})} />
+                    </div>
+                    <div className="flex flex-col gap-1 w-full max-w-[120px]">
+                        <label className="text-xs text-slate-600 font-medium">Amount</label>
+                        <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newBucket.budgeted} onChange={(e)=>setNewBucket({...newBucket,budgeted:e.target.value})} />
+                    </div>
+                    <div className="flex flex-col gap-1 w-full max-w-[120px]">
+                        <label className="text-xs text-slate-600 font-medium">Period</label>
+                        <select className="border rounded px-2 py-1 text-sm w-full" value={newBucket.period} onChange={(e)=>setNewBucket({...newBucket,period:e.target.value})}>
+                            <option value="monthly">Monthly</option>
+                            <option value="weekly">Weekly</option>
+                        </select>
+                    </div>
+                    <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">Add</button>
+                </form>
                 </div>
             </section>
             )}
@@ -323,17 +332,29 @@
                 </div>
                 <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Add Income</h3>
-                    <div className="flex flex-wrap gap-2 items-center">
-                    <input className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" placeholder="Name" value={newIncome.name} onChange={(e)=>setNewIncome({...newIncome,name:e.target.value})} />
-                    <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Amount" value={newIncome.amount} onChange={(e)=>setNewIncome({...newIncome,amount:e.target.value})} />
-                    <select className="border rounded px-2 py-1 text-sm w-full max-w-[110px]" value={newIncome.frequency} onChange={(e)=>setNewIncome({...newIncome,frequency:e.target.value})}>
-                        <option value="monthly">Monthly</option>
-                        <option value="weekly">Weekly</option>
-                        <option value="biweekly">Bi-weekly</option>
-                    </select>
-                    <input type="date" className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" value={newIncome.nextDate} onChange={(e)=>setNewIncome({...newIncome,nextDate:e.target.value})} />
-                    <button onClick={addIncome} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-sm w-full sm:w-auto border border-emerald-800 shadow-lg">➕ Add</button>
-                    </div>
+                    <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={e => {e.preventDefault();addIncome();}}>
+                        <div className="flex flex-col gap-1 w-full max-w-[160px]">
+                            <label className="text-xs text-slate-600 font-medium">Name</label>
+                            <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Name" value={newIncome.name} onChange={(e)=>setNewIncome({...newIncome,name:e.target.value})} />
+                        </div>
+                        <div className="flex flex-col gap-1 w-full max-w-[120px]">
+                            <label className="text-xs text-slate-600 font-medium">Amount</label>
+                            <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newIncome.amount} onChange={(e)=>setNewIncome({...newIncome,amount:e.target.value})} />
+                        </div>
+                        <div className="flex flex-col gap-1 w-full max-w-[120px]">
+                            <label className="text-xs text-slate-600 font-medium">Frequency</label>
+                            <select className="border rounded px-2 py-1 text-sm w-full" value={newIncome.frequency} onChange={(e)=>setNewIncome({...newIncome,frequency:e.target.value})}>
+                                <option value="monthly">Monthly</option>
+                                <option value="weekly">Weekly</option>
+                                <option value="biweekly">Bi-weekly</option>
+                            </select>
+                        </div>
+                        <div className="flex flex-col gap-1 w-full max-w-[140px]">
+                            <label className="text-xs text-slate-600 font-medium">Next Date</label>
+                            <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newIncome.nextDate} onChange={(e)=>setNewIncome({...newIncome,nextDate:e.target.value})} />
+                        </div>
+                        <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">Add Income</button>
+                    </form>
                     <div className="text-xs text-slate-500 mt-2">Tip: Set a next date to anchor weekly/bi-weekly cycles.</div>
                 </div>
                 </div>
@@ -359,28 +380,49 @@
                 </div>
                 <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Add Bill</h3>
-                    <div className="flex flex-wrap gap-2 items-center">
-                    <input className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" placeholder="Name" value={newBill.name} onChange={(e)=>setNewBill({...newBill,name:e.target.value})} />
-                    <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Amount" value={newBill.amount} onChange={(e)=>setNewBill({...newBill,amount:e.target.value})} />
-                    <select className="border rounded px-2 py-1 text-sm w-full max-w-[110px]" value={newBill.frequency} onChange={(e)=>setNewBill({...newBill,frequency:e.target.value})}>
-                        <option value="monthly">Monthly</option>
-                        <option value="weekly">Weekly</option>
-                        <option value="yearly">Yearly</option>
-                    </select>
-                    {newBill.frequency === 'monthly' && (
-                        <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Due day (1-28)" value={newBill.dueDay} onChange={(e)=>setNewBill({...newBill,dueDay:e.target.value})} />
-                    )}
-                    {newBill.frequency === 'weekly' && (
-                        <input type="date" className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" value={newBill.nextDate} onChange={(e)=>setNewBill({...newBill,nextDate:e.target.value})} />
-                    )}
-                    {newBill.frequency === 'yearly' && (
-                        <>
-                        <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Due month (1-12)" value={newBill.dueMonth} onChange={(e)=>setNewBill({...newBill,dueMonth:e.target.value})} />
-                        <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Due day (1-28)" value={newBill.dueDay} onChange={(e)=>setNewBill({...newBill,dueDay:e.target.value})} />
-                        </>
-                    )}
-                    <button onClick={addBill} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-sm w-full sm:w-auto border border-emerald-800 shadow-lg">➕ Add</button>
-                    </div>
+                    <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={e => {e.preventDefault();addBill();}}>
+                        <div className="flex flex-col gap-1 w-full max-w-[160px]">
+                            <label className="text-xs text-slate-600 font-medium">Name</label>
+                            <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Name" value={newBill.name} onChange={(e)=>setNewBill({...newBill,name:e.target.value})} />
+                        </div>
+                        <div className="flex flex-col gap-1 w-full max-w-[120px]">
+                            <label className="text-xs text-slate-600 font-medium">Amount</label>
+                            <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newBill.amount} onChange={(e)=>setNewBill({...newBill,amount:e.target.value})} />
+                        </div>
+                        <div className="flex flex-col gap-1 w-full max-w-[120px]">
+                            <label className="text-xs text-slate-600 font-medium">Frequency</label>
+                            <select className="border rounded px-2 py-1 text-sm w-full" value={newBill.frequency} onChange={(e)=>setNewBill({...newBill,frequency:e.target.value})}>
+                                <option value="monthly">Monthly</option>
+                                <option value="weekly">Weekly</option>
+                                <option value="yearly">Yearly</option>
+                            </select>
+                        </div>
+                        {newBill.frequency === 'monthly' && (
+                            <div className="flex flex-col gap-1 w-full max-w-[120px]">
+                                <label className="text-xs text-slate-600 font-medium">Due day (1-28)</label>
+                                <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Due day (1-28)" value={newBill.dueDay} onChange={(e)=>setNewBill({...newBill,dueDay:e.target.value})} />
+                            </div>
+                        )}
+                        {newBill.frequency === 'weekly' && (
+                            <div className="flex flex-col gap-1 w-full max-w-[140px]">
+                                <label className="text-xs text-slate-600 font-medium">Anchor Date</label>
+                                <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newBill.nextDate} onChange={(e)=>setNewBill({...newBill,nextDate:e.target.value})} />
+                            </div>
+                        )}
+                        {newBill.frequency === 'yearly' && (
+                            <>
+                            <div className="flex flex-col gap-1 w-full max-w-[100px]">
+                                <label className="text-xs text-slate-600 font-medium">Due month (1-12)</label>
+                                <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Due month (1-12)" value={newBill.dueMonth} onChange={(e)=>setNewBill({...newBill,dueMonth:e.target.value})} />
+                            </div>
+                            <div className="flex flex-col gap-1 w-full max-w-[100px]">
+                                <label className="text-xs text-slate-600 font-medium">Due day (1-28)</label>
+                                <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Due day (1-28)" value={newBill.dueDay} onChange={(e)=>setNewBill({...newBill,dueDay:e.target.value})} />
+                            </div>
+                            </>
+                        )}
+                        <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">Add Bill</button>
+                    </form>
                     <div className="text-xs text-slate-500 mt-2">Monthly bills: choose a due day (1–28). Weekly bills: set an anchor date.</div>
                 </div>
                 </div>
@@ -406,16 +448,28 @@
                 </div>
                 <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Add Transaction</h3>
-                    <div className="flex flex-wrap gap-2 items-center">
-                    <select className="border rounded px-2 py-1 text-sm w-full max-w-[110px]" value={newTransaction.bucketId} onChange={(e)=>setNewTransaction({...newTransaction,bucketId:e.target.value})}>
-                        <option value="">Select Bucket</option>
-                        {buckets.map(b=> <option key={b.id} value={b.id}>{b.name}</option>)}
-                    </select>
-                    <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Amount" value={newTransaction.amount} onChange={(e)=>setNewTransaction({...newTransaction,amount:e.target.value})} />
-                    <input className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" placeholder="Description" value={newTransaction.description} onChange={(e)=>setNewTransaction({...newTransaction,description:e.target.value})} />
-                    <input type="date" className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" value={newTransaction.date} onChange={(e)=>setNewTransaction({...newTransaction,date:e.target.value})} />
-                    <button onClick={addTransaction} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-sm w-full sm:w-auto border border-emerald-800 shadow-lg">➕ Add</button>
-                    </div>
+                    <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={e => {e.preventDefault();addTransaction();}}>
+                        <div className="flex flex-col gap-1 w-full max-w-[140px]">
+                            <label className="text-xs text-slate-600 font-medium">Bucket</label>
+                            <select className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.bucketId} onChange={(e)=>setNewTransaction({...newTransaction,bucketId:e.target.value})}>
+                                <option value="">Select Bucket</option>
+                                {buckets.map(b=> <option key={b.id} value={b.id}>{b.name}</option>)}
+                            </select>
+                        </div>
+                        <div className="flex flex-col gap-1 w-full max-w-[100px]">
+                            <label className="text-xs text-slate-600 font-medium">Amount</label>
+                            <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newTransaction.amount} onChange={(e)=>setNewTransaction({...newTransaction,amount:e.target.value})} />
+                        </div>
+                        <div className="flex flex-col gap-1 w-full max-w-[140px]">
+                            <label className="text-xs text-slate-600 font-medium">Description</label>
+                            <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Description" value={newTransaction.description} onChange={(e)=>setNewTransaction({...newTransaction,description:e.target.value})} />
+                        </div>
+                        <div className="flex flex-col gap-1 w-full max-w-[140px]">
+                            <label className="text-xs text-slate-600 font-medium">Date</label>
+                            <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.date} onChange={(e)=>setNewTransaction({...newTransaction,date:e.target.value})} />
+                        </div>
+                        <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">Add</button>
+                    </form>
                 </div>
                 </div>
             </section>
@@ -430,4 +484,3 @@
   </script>
 </body>
 </html>
-
