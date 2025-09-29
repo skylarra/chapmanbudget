@@ -45,6 +45,7 @@
             loadState("recurringBills", [
             { id: 1, name: "Rent", amount: 1200, frequency: "monthly", dueDay: 1 },
             { id: 2, name: "Phone", amount: 80, frequency: "monthly", dueDay: 15 },
+            { id: 3, name: "Car Insurance", amount: 600, frequency: "yearly", dueMonth: 6, dueDay: 15 },
             ])
         );
         const [transactions, setTransactions] = React.useState(loadState("transactions", []));
@@ -89,23 +90,30 @@
             const now = new Date();
             const floorToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
             if (item.frequency === "monthly") {
-            let day = item.dueDay || (item.nextDate ? new Date(item.nextDate).getDate() : 1);
-            day = Math.max(1, Math.min(28, day));
-            let cand = new Date(now.getFullYear(), now.getMonth(), day);
-            if (cand < floorToday) cand = new Date(now.getFullYear(), now.getMonth() + 1, day);
-            return fmtDate(cand);
+                let day = item.dueDay || (item.nextDate ? new Date(item.nextDate).getDate() : 1);
+                day = Math.max(1, Math.min(28, day));
+                let cand = new Date(now.getFullYear(), now.getMonth(), day);
+                if (cand < floorToday) cand = new Date(now.getFullYear(), now.getMonth() + 1, day);
+                return fmtDate(cand);
+            }
+            if (item.frequency === "yearly") {
+                let month = item.dueMonth ?? 0;
+                let day = item.dueDay ?? 1;
+                let cand = new Date(now.getFullYear(), month, day);
+                if (cand < floorToday) cand = new Date(now.getFullYear() + 1, month, day);
+                return fmtDate(cand);
             }
             if (item.frequency === "weekly") {
-            const base = item.nextDate ? new Date(item.nextDate) : new Date(now);
-            let cand = new Date(base);
-            while (cand < floorToday) cand.setDate(cand.getDate() + 7);
-            return fmtDate(cand);
+                const base = item.nextDate ? new Date(item.nextDate) : new Date(now);
+                let cand = new Date(base);
+                while (cand < floorToday) cand.setDate(cand.getDate() + 7);
+                return fmtDate(cand);
             }
             if (item.frequency === "biweekly") {
-            const base = item.nextDate ? new Date(item.nextDate) : new Date(now);
-            let cand = new Date(base);
-            while (cand < floorToday) cand.setDate(cand.getDate() + 14);
-            return fmtDate(cand);
+                const base = item.nextDate ? new Date(item.nextDate) : new Date(now);
+                let cand = new Date(base);
+                while (cand < floorToday) cand.setDate(cand.getDate() + 14);
+                return fmtDate(cand);
             }
             return item.nextDate || fmtDate(now);
         };
@@ -117,7 +125,11 @@
             if (i.frequency === "biweekly") return round2(i.amount * Math.floor(daysInMonth / 14));
             return round2(i.amount);
         };
-        const monthlyFromBill = (b) => (b.frequency === "weekly" ? round2(b.amount * weeksInMonth) : round2(b.amount));
+        const monthlyFromBill = (b) => {
+            if (b.frequency === "weekly") return round2(b.amount * weeksInMonth);
+            if (b.frequency === "yearly") return round2(b.amount / 12);
+            return round2(b.amount);
+        };
 
         const totalMonthlyIncome = recurringIncome.reduce((s, i) => s + monthlyFromIncome(i), 0);
         const totalMonthlyBills = recurringBills.reduce((s, b) => s + monthlyFromBill(b), 0);
@@ -150,8 +162,18 @@
         const addIncome=()=>{ if(!newIncome.name||!newIncome.amount)return; setRecurringIncome([...recurringIncome,{id:Date.now(),...newIncome,amount:round2(parseFloat(newIncome.amount))}]); setNewIncome({name:"",amount:"",frequency:"monthly",nextDate:""}); };
         const deleteIncome=id=>setRecurringIncome(recurringIncome.filter(i=>i.id!==id));
 
-        const [newBill,setNewBill]=React.useState({name:"",amount:"",frequency:"monthly",dueDay:"",nextDate:""});
-        const addBill=()=>{ if(!newBill.name||!newBill.amount)return; const b={id:Date.now(),...newBill,amount:round2(parseFloat(newBill.amount)),dueDay:newBill.frequency==="monthly"?parseInt(newBill.dueDay):undefined}; setRecurringBills([...recurringBills,b]); setNewBill({name:"",amount:"",frequency:"monthly",dueDay:"",nextDate:""}); };
+        const [newBill,setNewBill]=React.useState({name:"",amount:"",frequency:"monthly",dueDay:"",dueMonth:"",nextDate:""});
+        const addBill=()=>{
+            if(!newBill.name||!newBill.amount)return;
+            let b={id:Date.now(),...newBill,amount:round2(parseFloat(newBill.amount))};
+            if(newBill.frequency==="monthly") b.dueDay=parseInt(newBill.dueDay);
+            if(newBill.frequency==="yearly") {
+                b.dueDay=parseInt(newBill.dueDay);
+                b.dueMonth=parseInt(newBill.dueMonth);
+            }
+            setRecurringBills([...recurringBills,b]);
+            setNewBill({name:"",amount:"",frequency:"monthly",dueDay:"",dueMonth:"",nextDate:""});
+        };
         const deleteBill=id=>setRecurringBills(recurringBills.filter(b=>b.id!==id));
 
         // ---------- UI helpers ----------
@@ -343,12 +365,19 @@
                     <select className="border rounded px-2 py-1" value={newBill.frequency} onChange={(e)=>setNewBill({...newBill,frequency:e.target.value})}>
                         <option value="monthly">Monthly</option>
                         <option value="weekly">Weekly</option>
+                        <option value="yearly">Yearly</option>
                     </select>
                     {newBill.frequency === 'monthly' && (
                         <input type="number" className="border rounded px-2 py-1 w-28" placeholder="Due day (1-28)" value={newBill.dueDay} onChange={(e)=>setNewBill({...newBill,dueDay:e.target.value})} />
                     )}
                     {newBill.frequency === 'weekly' && (
                         <input type="date" className="border rounded px-2 py-1" value={newBill.nextDate} onChange={(e)=>setNewBill({...newBill,nextDate:e.target.value})} />
+                    )}
+                    {newBill.frequency === 'yearly' && (
+                        <>
+                        <input type="number" className="border rounded px-2 py-1 w-28" placeholder="Due month (1-12)" value={newBill.dueMonth} onChange={(e)=>setNewBill({...newBill,dueMonth:e.target.value})} />
+                        <input type="number" className="border rounded px-2 py-1 w-28" placeholder="Due day (1-28)" value={newBill.dueDay} onChange={(e)=>setNewBill({...newBill,dueDay:e.target.value})} />
+                        </>
                     )}
                     <button onClick={addBill} className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded">Add Bill</button>
                     </div>
