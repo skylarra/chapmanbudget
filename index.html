@@ -186,14 +186,14 @@
         // ---------- Render ----------
     return (
         <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-sky-50 to-emerald-50">
-        <div className="max-w-6xl mx-auto p-6">
-            <header className="flex items-center justify-between mb-6">
-            <h1 className="text-3xl font-extrabold text-slate-800">💰 Budget Buckets</h1>
-            <div className="flex items-center gap-2">
+        <div className="max-w-6xl mx-auto p-2 sm:p-4 md:p-6">
+            <header className="flex items-center justify-between mb-4 sm:mb-6">
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800">💰 Budget Buckets</h1>
+            <div className="flex flex-wrap items-center gap-2">
                 <select
                 value={selectedMonth}
                 onChange={(e)=>setSelectedMonth(parseInt(e.target.value))}
-                className="border rounded px-2 py-1 bg-white shadow-sm"
+                className="border rounded px-2 py-1 bg-white shadow-sm text-sm min-w-[110px]"
                 >
                 {Array.from({length:12},(_,i)=>
                     <option key={i} value={i}>{new Date(2000,i).toLocaleString("en-US",{month:"long"})}</option>
@@ -203,15 +203,15 @@
                 type="number"
                 value={selectedYear}
                 onChange={(e)=>setSelectedYear(parseInt(e.target.value))}
-                className="border rounded px-2 py-1 w-24 bg-white shadow-sm"
+                className="border rounded px-2 py-1 w-20 sm:w-24 bg-white shadow-sm text-sm"
                 />
-                <button onClick={downloadMonthlySummary} className="ml-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded shadow">
+                <button onClick={downloadMonthlySummary} className="ml-0 sm:ml-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded shadow text-sm"> 
                 Download Summary
                 </button>
             </div>
             </header>
 
-            <nav className="flex flex-wrap gap-2 mb-6">
+            <nav className="flex flex-wrap gap-2 mb-4 sm:mb-6">
             {["summary","buckets","income","bills","transactions"].map(tab=>
                 <button
                 key={tab}
@@ -225,26 +225,26 @@
 
             {activeTab==="summary" && (
             <section>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                <div className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-6">
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <div className="text-slate-500 text-sm">Income</div>
                     <div className="text-2xl font-semibold text-slate-800">{currency(totalMonthlyIncome)}</div>
                 </div>
-                <div className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <div className="text-slate-500 text-sm">Bills</div>
                     <div className="text-2xl font-semibold text-rose-600">-{currency(totalMonthlyBills).slice(1)}</div>
                 </div>
-                <div className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <div className="text-slate-500 text-sm">Spent</div>
                     <div className="text-2xl font-semibold text-rose-600">-{currency(totalMonthlySpent).slice(1)}</div>
                 </div>
-                <div className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <div className="text-slate-500 text-sm">Remaining Now</div>
                     <div className={`text-2xl font-semibold ${monthlyRemaining>=0?"text-emerald-600":"text-rose-600"}`}>{currency(monthlyRemaining)}</div>
                 </div>
                 </div>
 
-                <div className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                 <div className="flex items-center justify-between">
                     <div className="text-slate-700 font-semibold">If All Budgets Spent</div>
                     <div className={`text-lg font-bold ${projectedRemaining>=0?"text-emerald-600":"text-rose-600"}`}>{currency(projectedRemaining)}</div>
@@ -256,12 +256,12 @@
 
             {activeTab==="buckets" && (
             <section>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6">
                 {buckets.map((b)=>{
                     const pct = Math.min(100,(b.spent/b.budgeted)*100);
                     const remaining = round2(b.budgeted - b.spent);
                     return (
-                    <div key={b.id} className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                    <div key={b.id} className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                         <div className="flex items-center justify-between mb-1">
                         <h3 className="font-semibold text-slate-800">{b.name}</h3>
                         <span className={`text-xs px-2 py-0.5 rounded-full ${b.period==='weekly'?'bg-sky-100 text-sky-700':'bg-emerald-100 text-emerald-700'}`}>{b.period}</span>
@@ -289,16 +289,16 @@
                 })}
                 </div>
 
-                <div className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                 <h3 className="font-semibold text-slate-800 mb-3">Add Bucket</h3>
                 <div className="flex flex-wrap gap-2">
-                    <input className="border rounded px-2 py-1" placeholder="Name" value={newBucket.name} onChange={(e)=>setNewBucket({...newBucket,name:e.target.value})} />
-                    <input type="number" className="border rounded px-2 py-1 w-28" placeholder="Amount" value={newBucket.budgeted} onChange={(e)=>setNewBucket({...newBucket,budgeted:e.target.value})} />
-                    <select className="border rounded px-2 py-1" value={newBucket.period} onChange={(e)=>setNewBucket({...newBucket,period:e.target.value})}>
+                    <input className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" placeholder="Name" value={newBucket.name} onChange={(e)=>setNewBucket({...newBucket,name:e.target.value})} />
+                    <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Amount" value={newBucket.budgeted} onChange={(e)=>setNewBucket({...newBucket,budgeted:e.target.value})} />
+                    <select className="border rounded px-2 py-1 text-sm w-full max-w-[110px]" value={newBucket.period} onChange={(e)=>setNewBucket({...newBucket,period:e.target.value})}>
                     <option value="monthly">Monthly</option>
                     <option value="weekly">Weekly</option>
                     </select>
-                    <button onClick={addBucket} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded">Add</button>
+                    <button onClick={addBucket} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-sm w-full sm:w-auto">Add</button>
                 </div>
                 </div>
             </section>
@@ -306,8 +306,8 @@
 
             {activeTab==="income" && (
             <section>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-                <div className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4 sm:mb-6">
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Recurring Income</h3>
                     <div className="space-y-3">
                     {recurringIncome.map((i)=> (
@@ -321,18 +321,18 @@
                     ))}
                     </div>
                 </div>
-                <div className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Add Income</h3>
                     <div className="flex flex-wrap gap-2 items-center">
-                    <input className="border rounded px-2 py-1" placeholder="Name" value={newIncome.name} onChange={(e)=>setNewIncome({...newIncome,name:e.target.value})} />
-                    <input type="number" className="border rounded px-2 py-1 w-28" placeholder="Amount" value={newIncome.amount} onChange={(e)=>setNewIncome({...newIncome,amount:e.target.value})} />
-                    <select className="border rounded px-2 py-1" value={newIncome.frequency} onChange={(e)=>setNewIncome({...newIncome,frequency:e.target.value})}>
+                    <input className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" placeholder="Name" value={newIncome.name} onChange={(e)=>setNewIncome({...newIncome,name:e.target.value})} />
+                    <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Amount" value={newIncome.amount} onChange={(e)=>setNewIncome({...newIncome,amount:e.target.value})} />
+                    <select className="border rounded px-2 py-1 text-sm w-full max-w-[110px]" value={newIncome.frequency} onChange={(e)=>setNewIncome({...newIncome,frequency:e.target.value})}>
                         <option value="monthly">Monthly</option>
                         <option value="weekly">Weekly</option>
                         <option value="biweekly">Bi-weekly</option>
                     </select>
-                    <input type="date" className="border rounded px-2 py-1" value={newIncome.nextDate} onChange={(e)=>setNewIncome({...newIncome,nextDate:e.target.value})} />
-                    <button onClick={addIncome} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded">Add Income</button>
+                    <input type="date" className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" value={newIncome.nextDate} onChange={(e)=>setNewIncome({...newIncome,nextDate:e.target.value})} />
+                    <button onClick={addIncome} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-sm w-full sm:w-auto">Add Income</button>
                     </div>
                     <div className="text-xs text-slate-500 mt-2">Tip: Set a next date to anchor weekly/bi-weekly cycles.</div>
                 </div>
@@ -342,8 +342,8 @@
 
             {activeTab==="bills" && (
             <section>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-                <div className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4 sm:mb-6">
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Recurring Bills</h3>
                     <div className="space-y-3">
                     {recurringBills.map((b)=> (
@@ -357,29 +357,29 @@
                     ))}
                     </div>
                 </div>
-                <div className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Add Bill</h3>
                     <div className="flex flex-wrap gap-2 items-center">
-                    <input className="border rounded px-2 py-1" placeholder="Name" value={newBill.name} onChange={(e)=>setNewBill({...newBill,name:e.target.value})} />
-                    <input type="number" className="border rounded px-2 py-1 w-28" placeholder="Amount" value={newBill.amount} onChange={(e)=>setNewBill({...newBill,amount:e.target.value})} />
-                    <select className="border rounded px-2 py-1" value={newBill.frequency} onChange={(e)=>setNewBill({...newBill,frequency:e.target.value})}>
+                    <input className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" placeholder="Name" value={newBill.name} onChange={(e)=>setNewBill({...newBill,name:e.target.value})} />
+                    <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Amount" value={newBill.amount} onChange={(e)=>setNewBill({...newBill,amount:e.target.value})} />
+                    <select className="border rounded px-2 py-1 text-sm w-full max-w-[110px]" value={newBill.frequency} onChange={(e)=>setNewBill({...newBill,frequency:e.target.value})}>
                         <option value="monthly">Monthly</option>
                         <option value="weekly">Weekly</option>
                         <option value="yearly">Yearly</option>
                     </select>
                     {newBill.frequency === 'monthly' && (
-                        <input type="number" className="border rounded px-2 py-1 w-28" placeholder="Due day (1-28)" value={newBill.dueDay} onChange={(e)=>setNewBill({...newBill,dueDay:e.target.value})} />
+                        <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Due day (1-28)" value={newBill.dueDay} onChange={(e)=>setNewBill({...newBill,dueDay:e.target.value})} />
                     )}
                     {newBill.frequency === 'weekly' && (
-                        <input type="date" className="border rounded px-2 py-1" value={newBill.nextDate} onChange={(e)=>setNewBill({...newBill,nextDate:e.target.value})} />
+                        <input type="date" className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" value={newBill.nextDate} onChange={(e)=>setNewBill({...newBill,nextDate:e.target.value})} />
                     )}
                     {newBill.frequency === 'yearly' && (
                         <>
-                        <input type="number" className="border rounded px-2 py-1 w-28" placeholder="Due month (1-12)" value={newBill.dueMonth} onChange={(e)=>setNewBill({...newBill,dueMonth:e.target.value})} />
-                        <input type="number" className="border rounded px-2 py-1 w-28" placeholder="Due day (1-28)" value={newBill.dueDay} onChange={(e)=>setNewBill({...newBill,dueDay:e.target.value})} />
+                        <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Due month (1-12)" value={newBill.dueMonth} onChange={(e)=>setNewBill({...newBill,dueMonth:e.target.value})} />
+                        <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Due day (1-28)" value={newBill.dueDay} onChange={(e)=>setNewBill({...newBill,dueDay:e.target.value})} />
                         </>
                     )}
-                    <button onClick={addBill} className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded">Add Bill</button>
+                    <button onClick={addBill} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-sm w-full sm:w-auto">Add Bill</button>
                     </div>
                     <div className="text-xs text-slate-500 mt-2">Monthly bills: choose a due day (1–28). Weekly bills: set an anchor date.</div>
                 </div>
@@ -390,7 +390,7 @@
             {activeTab==="transactions" && (
             <section>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-                <div className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Transactions</h3>
                     <div className="space-y-3">
                     {transactions.map((t)=> (
@@ -404,17 +404,17 @@
                     ))}
                     </div>
                 </div>
-                <div className="bg-white rounded-xl shadow p-4 border border-slate-100">
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Add Transaction</h3>
                     <div className="flex flex-wrap gap-2 items-center">
-                    <select className="border rounded px-2 py-1" value={newTransaction.bucketId} onChange={(e)=>setNewTransaction({...newTransaction,bucketId:e.target.value})}>
+                    <select className="border rounded px-2 py-1 text-sm w-full max-w-[110px]" value={newTransaction.bucketId} onChange={(e)=>setNewTransaction({...newTransaction,bucketId:e.target.value})}>
                         <option value="">Select Bucket</option>
                         {buckets.map(b=> <option key={b.id} value={b.id}>{b.name}</option>)}
                     </select>
-                    <input type="number" className="border rounded px-2 py-1 w-28" placeholder="Amount" value={newTransaction.amount} onChange={(e)=>setNewTransaction({...newTransaction,amount:e.target.value})} />
-                    <input className="border rounded px-2 py-1" placeholder="Description" value={newTransaction.description} onChange={(e)=>setNewTransaction({...newTransaction,description:e.target.value})} />
-                    <input type="date" className="border rounded px-2 py-1" value={newTransaction.date} onChange={(e)=>setNewTransaction({...newTransaction,date:e.target.value})} />
-                    <button onClick={addTransaction} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded">Add</button>
+                    <input type="number" className="border rounded px-2 py-1 text-sm w-20 max-w-[100px]" placeholder="Amount" value={newTransaction.amount} onChange={(e)=>setNewTransaction({...newTransaction,amount:e.target.value})} />
+                    <input className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" placeholder="Description" value={newTransaction.description} onChange={(e)=>setNewTransaction({...newTransaction,description:e.target.value})} />
+                    <input type="date" className="border rounded px-2 py-1 text-sm w-full max-w-[140px]" value={newTransaction.date} onChange={(e)=>setNewTransaction({...newTransaction,date:e.target.value})} />
+                    <button onClick={addTransaction} className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded text-sm w-full sm:w-auto">Add</button>
                     </div>
                 </div>
                 </div>
