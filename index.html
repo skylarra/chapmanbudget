@@ -16,7 +16,14 @@
     function App() {
         // ---------- Utils ----------
         const round2 = (n) => Math.round(n * 100) / 100;
-        const fmtDate = (d) => new Date(d).toISOString().split("T")[0];
+        // Format date as YYYY-MM-DD in local time
+        const fmtDate = (d) => {
+            const date = new Date(d);
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
         const currency = (n) => `$${round2(n).toFixed(2)}`;
 
         // ---------- Load persisted state ----------
@@ -166,14 +173,41 @@
             date.setHours(0,0,0,0);
             return date;
         }
+        function getEndOfWeek(d) {
+            const date = new Date(d);
+            const day = date.getDay();
+            // Sunday is 0, so days to add = (7 - day) % 7
+            const daysToAdd = (7 - day) % 7;
+            date.setDate(date.getDate() + daysToAdd);
+            date.setHours(23,59,59,999);
+            return date;
+        }
         const now = new Date();
         const lastMonday = getLastMonday(now);
+        const endOfWeek = getEndOfWeek(now);
         // Calculate spent for each bucket
+        // Helper to parse YYYY-MM-DD as local date
+        function parseLocalDate(str) {
+            if (!str) return null;
+            const [year, month, day] = str.split('-').map(Number);
+            return new Date(year, month - 1, day);
+        }
         const bucketsWithSpent = buckets.map(b => {
             if (b.period === "weekly") {
-                // Only sum transactions for this bucket from last Monday to today
-                const spent = transactions.filter(t => t.bucketId === b.id && new Date(t.date) >= lastMonday && new Date(t.date) <= now)
-                    .reduce((sum, t) => sum + t.amount, 0);
+                // Only sum transactions for this bucket from last Monday (inclusive) to end of this Sunday (inclusive)
+                const spent = transactions.filter(t => {
+                    const txDate = parseLocalDate(t.date);
+                    return t.bucketId === b.id && txDate && txDate >= lastMonday && txDate <= endOfWeek;
+                }).reduce((sum, t) => sum + t.amount, 0);
+                return { ...b, spent: round2(spent) };
+            } else if (b.period === "monthly") {
+                // Only sum transactions for this bucket from the 1st to the last day of the selected month (inclusive)
+                const monthStart = new Date(selectedYear, selectedMonth, 1, 0, 0, 0, 0);
+                const monthEnd = new Date(selectedYear, selectedMonth, daysInMonth, 23, 59, 59, 999);
+                const spent = transactions.filter(t => {
+                    const txDate = parseLocalDate(t.date);
+                    return t.bucketId === b.id && txDate && txDate >= monthStart && txDate <= monthEnd;
+                }).reduce((sum, t) => sum + t.amount, 0);
                 return { ...b, spent: round2(spent) };
             }
             return b;
@@ -260,10 +294,13 @@
                 const m = monthlyFromBudget(b);
                 const spent = b.spent;
                 const remaining = m - spent;
-                // List all transactions for this bucket (weekly: only from last Monday)
+                // List all transactions for this bucket (weekly: only from last Monday to Sunday)
                 let txs = transactions.filter(t => t.bucketId === b.id);
                 if (b.period === "weekly") {
-                    txs = txs.filter(t => new Date(t.date) >= lastMonday && new Date(t.date) <= now);
+                    txs = txs.filter(t => {
+                        const txDate = parseLocalDate(t.date);
+                        return txDate && txDate >= lastMonday && txDate <= endOfWeek;
+                    });
                 }
                 txt += `- ${b.name}:\n`;
                 txt += `    Budgeted: $${m.toFixed(2)} (${b.period})\n`;
