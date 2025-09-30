@@ -337,7 +337,9 @@
             const a = document.createElement("a");
             a.href = url;
             a.download = `summary-${selectedYear}-${String(selectedMonth + 1).padStart(2, "0")}.txt`;
+            document.body.appendChild(a); // Required for Safari
             a.click();
+            document.body.removeChild(a);
             URL.revokeObjectURL(url);
         };
 
@@ -350,13 +352,13 @@
                 const text = event.target.result;
                 // Parse the summary file
                 // --- INCOME ---
-                const incomeSection = text.match(/INCOME \(for the month\):([\s\S]*?)Total Income:/);
+                const incomeSection = text.match(/INCOME \(for the month\):([\s\S]*?)Total Income(?: \(monthly\))?:/);
                 let parsedIncome = [];
                 if (incomeSection) {
                     const lines = incomeSection[1].split('\n').map(l=>l.trim()).filter(l=>l.startsWith('- '));
                     parsedIncome = lines.map(line => {
-                        // - Salary: $3000.00 (monthly, Next: 2025-10-01)
-                        const m = line.match(/^- (.*?): \$(\d+(?:\.\d+)?) \(([^,]+)(?:, Next: ([^\)]+))?\)/);
+                        // - Salary: $900.00 (weekly, Next: 2025-10-01)
+                        const m = line.match(/^- (.*?): \$(\d+(?:\.\d+)?) \((\w+)(?:, Next: ([^\)]+))?\)/);
                         if (!m) return null;
                         return {
                             id: Date.now() + Math.random(),
@@ -369,49 +371,69 @@
                 }
 
                 // --- BUCKETS ---
-                const bucketsSection = text.match(/BUCKETS \(Budget, Spent, Remaining\):([\s\S]*?)Total Budgeted:/);
+                const bucketsSection = text.match(/BUCKETS \(Budget, Spent, Remaining\):([\s\S]*?)Total Budgeted(?: \(monthly\))?:/);
                 let parsedBuckets = [];
                 let parsedTransactions = [];
                 let bucketNameToId = {};
                 if (bucketsSection) {
-                    const bucketBlocks = bucketsSection[1].split(/^- /).slice(1);
-                    bucketBlocks.forEach(block => {
-                        const lines = block.split('\n').map(l=>l.trim());
-                        const name = lines[0].replace(/:$/, "");
-                        const budgeted = parseFloat((lines[1].match(/Budgeted: \$(\d+(?:\.\d+)?) \((.*?)\)/)||[])[1]);
-                        const period = (lines[1].match(/Budgeted: \$\d+(?:\.\d+)? \((.*?)\)/)||[])[1];
-                        // Transactions
-                        let txs = [];
-                        const txIdx = lines.findIndex(l=>l.startsWith('Transactions:'));
-                        if (txIdx !== -1) {
-                            for (let i=txIdx+1; i<lines.length; ++i) {
-                                const txm = lines[i].match(/- (\d{4}-\d{2}-\d{2}): \$(\d+(?:\.\d+)?) - (.*)/);
-                                if (txm) {
-                                    txs.push({
-                                        id: Date.now() + Math.random(),
-                                        bucketName: name, // temporarily store name
-                                        date: txm[1],
-                                        amount: parseFloat(txm[2]),
-                                        description: txm[3]
-                                    });
-                                }
+                    // Split by lines, then group lines by bucket (start with '- ' and not a transaction)
+                    const lines = bucketsSection[1].split('\n').map(l=>l.trim());
+                    let currentBucket = null;
+                    let currentTxs = [];
+                    for (let i = 0; i < lines.length; ++i) {
+                        const line = lines[i];
+                        // Only treat as bucket if '- ' and NOT a transaction line
+                        if (line.startsWith('- ') && !line.match(/^- (\d{4}-\d{2}-\d{2}): \$(\d+(?:\.\d+)?) - /)) {
+                            // Save previous bucket if exists
+                            if (currentBucket) {
+                                // Assign bucketId to txs
+                                currentTxs.forEach(tx => tx.bucketId = currentBucket.id);
+                                parsedBuckets.push(currentBucket);
+                                parsedTransactions.push(...currentTxs);
+                            }
+                            // New bucket
+                            const name = line.slice(2).replace(/:$/, "");
+                            const bucketId = Date.now() + Math.random();
+                            currentBucket = { id: bucketId, name, budgeted: 0, spent: 0, period: "monthly" };
+                            bucketNameToId[name] = bucketId;
+                            currentTxs = [];
+                        } else if (line.startsWith('Budgeted:')) {
+                            const m = line.match(/Budgeted: \$(\d+(?:\.\d+)?) \((\w+)\)/);
+                            if (m && currentBucket) {
+                                currentBucket.budgeted = parseFloat(m[1]);
+                                currentBucket.period = m[2];
+                            }
+                        } else if (line.startsWith('Transactions:')) {
+                            // Transactions will follow
+                        } else if (line.match(/^- (\d{4}-\d{2}-\d{2}): \$(\d+(?:\.\d+)?) - (.*)/)) {
+                            // Transaction line
+                            const txm = line.match(/- (\d{4}-\d{2}-\d{2}): \$(\d+(?:\.\d+)?) - (.*)/);
+                            if (txm && currentBucket) {
+                                currentTxs.push({
+                                    id: Date.now() + Math.random(),
+                                    date: txm[1],
+                                    amount: parseFloat(txm[2]),
+                                    description: txm[3]
+                                });
                             }
                         }
-                        const bucketId = Date.now() + Math.random();
-                        bucketNameToId[name] = bucketId;
-                        parsedBuckets.push({ id: bucketId, name, budgeted, spent: 0, period });
-                        parsedTransactions.push(...txs);
-                    });
+                    }
+                    // Push last bucket
+                    if (currentBucket) {
+                        currentTxs.forEach(tx => tx.bucketId = currentBucket.id);
+                        parsedBuckets.push(currentBucket);
+                        parsedTransactions.push(...currentTxs);
+                    }
                 }
 
                 // --- BILLS ---
-                const billsSection = text.match(/BILLS \(for the month\):([\s\S]*?)Total Bills:/);
+                const billsSection = text.match(/BILLS \(for the month\):([\s\S]*?)Total Bills(?: \(monthly\))?:/);
                 let parsedBills = [];
                 if (billsSection) {
                     const lines = billsSection[1].split('\n').map(l=>l.trim()).filter(l=>l.startsWith('- '));
                     parsedBills = lines.map(line => {
                         // - Rent: $1200.00 (monthly, Due Day: 1, Next: 2025-10-01)
-                        const m = line.match(/^- (.*?): \$(\d+(?:\.\d+)?) \(([^,]+)(?:, Due Day: (\d+))?(?:, Due: (\d+)\/(\d+))?(?:, Anchor: ([^,]+))?, Next: ([^\)]+)\)/);
+                        const m = line.match(/^- (.*?): \$(\d+(?:\.\d+)?) \((\w+)(?:, Due Day: (\d+))?(?:, Due: (\d+)\/(\d+))?(?:, Anchor: ([^,]+))?, Next: ([^\)]+)\)/);
                         if (!m) return null;
                         return {
                             id: Date.now() + Math.random(),
@@ -426,17 +448,11 @@
                     }).filter(Boolean);
                 }
 
-                // Fix transaction bucketId mapping
-                parsedTransactions.forEach(t => {
-                    t.bucketId = bucketNameToId[t.bucketName] || null;
-                    delete t.bucketName;
-                });
-
-                // Set state
+                // Only update buckets, income, and bills. Do not update transactions.
                 setBuckets(parsedBuckets);
                 setRecurringIncome(parsedIncome);
                 setRecurringBills(parsedBills);
-                setTransactions(parsedTransactions);
+                // setTransactions(parsedTransactions); // Skip updating transactions for now
             };
             reader.readAsText(file);
         };
