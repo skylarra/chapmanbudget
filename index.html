@@ -283,18 +283,17 @@
             // INCOME
             txt += "INCOME (for the month):\n";
             recurringIncome.forEach(i => {
-                txt += `- ${i.name}: $${monthlyFromIncome(i).toFixed(2)} (${i.frequency}`;
+                txt += `- ${i.name}: $${i.amount.toFixed(2)} (${i.frequency}`;
                 if (i.nextDate) txt += `, Next: ${nextSingleDueDate(i)}`;
                 txt += `)\n`;
             });
-            txt += `Total Income: $${totalMonthlyIncome.toFixed(2)}\n\n`;
+            txt += `Total Income (monthly): $${totalMonthlyIncome.toFixed(2)}\n\n`;
 
             // BUCKETS
             txt += "BUCKETS (Budget, Spent, Remaining):\n";
             bucketsWithSpent.forEach(b => {
-                const m = monthlyFromBudget(b);
                 const spent = b.spent;
-                const remaining = m - spent;
+                const remaining = b.budgeted - spent;
                 // List all transactions for this bucket (weekly: only from last Monday to Sunday)
                 let txs = transactions.filter(t => t.bucketId === b.id);
                 if (b.period === "weekly") {
@@ -304,7 +303,7 @@
                     });
                 }
                 txt += `- ${b.name}:\n`;
-                txt += `    Budgeted: $${m.toFixed(2)} (${b.period})\n`;
+                txt += `    Budgeted: $${b.budgeted.toFixed(2)} (${b.period})\n`;
                 txt += `    Spent: $${spent.toFixed(2)}\n`;
                 txt += `    Remaining: $${remaining.toFixed(2)}\n`;
                 if (txs.length > 0) {
@@ -314,24 +313,24 @@
                     });
                 }
             });
-            txt += `Total Budgeted: $${totalMonthlyBudgeted.toFixed(2)}\nTotal Spent: $${totalMonthlySpent.toFixed(2)}\n\n`;
+            txt += `Total Budgeted (monthly): $${totalMonthlyBudgeted.toFixed(2)}\nTotal Spent (monthly): $${totalMonthlySpent.toFixed(2)}\n\n`;
 
             // BILLS
             txt += "BILLS (for the month):\n";
             recurringBills.forEach(b => {
-                txt += `- ${b.name}: $${monthlyFromBill(b).toFixed(2)} (${b.frequency}`;
+                txt += `- ${b.name}: $${b.amount.toFixed(2)} (${b.frequency}`;
                 if (b.frequency === "monthly" && b.dueDay) txt += `, Due Day: ${b.dueDay}`;
                 if (b.frequency === "yearly" && b.dueMonth && b.dueDay) txt += `, Due: ${b.dueMonth}/${b.dueDay}`;
                 if (b.frequency === "weekly" && b.nextDate) txt += `, Anchor: ${b.nextDate}`;
                 txt += `, Next: ${nextSingleDueDate(b)}`;
                 txt += ")\n";
             });
-            txt += `Total Bills: $${totalMonthlyBills.toFixed(2)}\n\n`;
+            txt += `Total Bills (monthly): $${totalMonthlyBills.toFixed(2)}\n\n`;
 
             // OVERVIEW
             txt += "OVERVIEW:\n";
-            txt += `Remaining Now: $${monthlyRemaining.toFixed(2)}\n`;
-            txt += `If All Budgets Spent: $${projectedRemaining.toFixed(2)}\n`;
+            txt += `Remaining Now (monthly): $${monthlyRemaining.toFixed(2)}\n`;
+            txt += `If All Budgets Spent (monthly): $${projectedRemaining.toFixed(2)}\n`;
 
             const blob = new Blob([txt], { type: "text/plain" });
             const url = URL.createObjectURL(blob);
@@ -340,6 +339,106 @@
             a.download = `summary-${selectedYear}-${String(selectedMonth + 1).padStart(2, "0")}.txt`;
             a.click();
             URL.revokeObjectURL(url);
+        };
+
+        // ---------- Upload summary ----------
+        const handleSummaryUpload = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const text = event.target.result;
+                // Parse the summary file
+                // --- INCOME ---
+                const incomeSection = text.match(/INCOME \(for the month\):([\s\S]*?)Total Income:/);
+                let parsedIncome = [];
+                if (incomeSection) {
+                    const lines = incomeSection[1].split('\n').map(l=>l.trim()).filter(l=>l.startsWith('- '));
+                    parsedIncome = lines.map(line => {
+                        // - Salary: $3000.00 (monthly, Next: 2025-10-01)
+                        const m = line.match(/^- (.*?): \$(\d+(?:\.\d+)?) \(([^,]+)(?:, Next: ([^\)]+))?\)/);
+                        if (!m) return null;
+                        return {
+                            id: Date.now() + Math.random(),
+                            name: m[1],
+                            amount: parseFloat(m[2]),
+                            frequency: m[3],
+                            nextDate: m[4] || ""
+                        };
+                    }).filter(Boolean);
+                }
+
+                // --- BUCKETS ---
+                const bucketsSection = text.match(/BUCKETS \(Budget, Spent, Remaining\):([\s\S]*?)Total Budgeted:/);
+                let parsedBuckets = [];
+                let parsedTransactions = [];
+                let bucketNameToId = {};
+                if (bucketsSection) {
+                    const bucketBlocks = bucketsSection[1].split(/^- /).slice(1);
+                    bucketBlocks.forEach(block => {
+                        const lines = block.split('\n').map(l=>l.trim());
+                        const name = lines[0].replace(/:$/, "");
+                        const budgeted = parseFloat((lines[1].match(/Budgeted: \$(\d+(?:\.\d+)?) \((.*?)\)/)||[])[1]);
+                        const period = (lines[1].match(/Budgeted: \$\d+(?:\.\d+)? \((.*?)\)/)||[])[1];
+                        // Transactions
+                        let txs = [];
+                        const txIdx = lines.findIndex(l=>l.startsWith('Transactions:'));
+                        if (txIdx !== -1) {
+                            for (let i=txIdx+1; i<lines.length; ++i) {
+                                const txm = lines[i].match(/- (\d{4}-\d{2}-\d{2}): \$(\d+(?:\.\d+)?) - (.*)/);
+                                if (txm) {
+                                    txs.push({
+                                        id: Date.now() + Math.random(),
+                                        bucketName: name, // temporarily store name
+                                        date: txm[1],
+                                        amount: parseFloat(txm[2]),
+                                        description: txm[3]
+                                    });
+                                }
+                            }
+                        }
+                        const bucketId = Date.now() + Math.random();
+                        bucketNameToId[name] = bucketId;
+                        parsedBuckets.push({ id: bucketId, name, budgeted, spent: 0, period });
+                        parsedTransactions.push(...txs);
+                    });
+                }
+
+                // --- BILLS ---
+                const billsSection = text.match(/BILLS \(for the month\):([\s\S]*?)Total Bills:/);
+                let parsedBills = [];
+                if (billsSection) {
+                    const lines = billsSection[1].split('\n').map(l=>l.trim()).filter(l=>l.startsWith('- '));
+                    parsedBills = lines.map(line => {
+                        // - Rent: $1200.00 (monthly, Due Day: 1, Next: 2025-10-01)
+                        const m = line.match(/^- (.*?): \$(\d+(?:\.\d+)?) \(([^,]+)(?:, Due Day: (\d+))?(?:, Due: (\d+)\/(\d+))?(?:, Anchor: ([^,]+))?, Next: ([^\)]+)\)/);
+                        if (!m) return null;
+                        return {
+                            id: Date.now() + Math.random(),
+                            name: m[1],
+                            amount: parseFloat(m[2]),
+                            frequency: m[3],
+                            dueDay: m[4] ? parseInt(m[4]) : undefined,
+                            dueMonth: m[5] ? parseInt(m[5]) : undefined,
+                            // m[6] is dueDay for yearly, m[7] is anchor for weekly
+                            nextDate: m[7] || "",
+                        };
+                    }).filter(Boolean);
+                }
+
+                // Fix transaction bucketId mapping
+                parsedTransactions.forEach(t => {
+                    t.bucketId = bucketNameToId[t.bucketName] || null;
+                    delete t.bucketName;
+                });
+
+                // Set state
+                setBuckets(parsedBuckets);
+                setRecurringIncome(parsedIncome);
+                setRecurringBills(parsedBills);
+                setTransactions(parsedTransactions);
+            };
+            reader.readAsText(file);
         };
 
         // ---------- Render ----------
@@ -367,6 +466,10 @@
                 <button onClick={downloadMonthlySummary} className="ml-0 sm:ml-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded shadow text-sm"> 
                 Download Summary
                 </button>
+                <label className="ml-2 text-xs text-slate-600 font-medium cursor-pointer bg-slate-100 px-2 py-1 rounded shadow-sm border border-slate-200 hover:bg-slate-200">
+                    Upload Summary
+                    <input type="file" accept=".txt" onChange={handleSummaryUpload} className="hidden" />
+                </label>
             </div>
             </header>
 
