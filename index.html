@@ -65,11 +65,33 @@
             const lastSeen = localStorage.getItem("lastSeenMonth");
             const current = `${now.getFullYear()}-${now.getMonth() + 1}`;
             if (lastSeen !== current && now.getDate() === 1) {
-            setTransactions([]);
-            setBuckets((prev) => prev.map((b) => ({ ...b, spent: 0 })));
-            localStorage.setItem("lastSeenMonth", current);
+                setTransactions([]);
+                setBuckets((prev) => prev.map((b) => ({ ...b, spent: 0 })));
+                localStorage.setItem("lastSeenMonth", current);
             } else if (!lastSeen) {
-            localStorage.setItem("lastSeenMonth", current);
+                localStorage.setItem("lastSeenMonth", current);
+            }
+        }, []);
+
+        // ---------- Weekly reset for weekly buckets (spent only, not transactions) ----------
+        React.useEffect(() => {
+            // Only reset on Mondays
+            const now = new Date();
+            const isMonday = now.getDay() === 1; // 0=Sunday, 1=Monday
+            if (!isMonday) return;
+            // Week number: ISO week (Monday as first day)
+            const getWeekNumber = (d) => {
+                d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+                const dayNum = d.getUTCDay() || 7;
+                d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+                const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+                return Math.ceil((((d - yearStart) / 86400000) + 1)/7);
+            };
+            const currentWeek = `${now.getFullYear()}-W${getWeekNumber(now)}`;
+            const lastSeenWeek = localStorage.getItem("lastSeenWeek");
+            if (lastSeenWeek !== currentWeek) {
+                setBuckets(prev => prev.map(b => b.period === "weekly" ? { ...b, spent: 0 } : b));
+                localStorage.setItem("lastSeenWeek", currentWeek);
             }
         }, []);
 
