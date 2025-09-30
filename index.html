@@ -191,7 +191,64 @@
         const Chip = ({text,color="blue"}) => (<span className={`inline-block text-xs px-2 py-0.5 rounded-full bg-${color}-100 text-${color}-700 border border-${color}-200`}>{text}</span>);
 
         // ---------- Download summary ----------
-        const downloadMonthlySummary=()=>{ const label=new Date(selectedYear,selectedMonth).toLocaleDateString("en-US",{month:"long",year:"numeric"}); let txt=`MONTHLY SUMMARY - ${label}\n\n`; txt+="INCOME:\n"; recurringIncome.forEach(i=>{ txt+=`${i.name}: $${monthlyFromIncome(i).toFixed(2)} (${i.frequency}) Next: ${nextSingleDueDate(i)}\n`;}); txt+=`Total: $${totalMonthlyIncome.toFixed(2)}\n\n`; txt+="BILLS:\n"; recurringBills.forEach(b=>{ txt+=`${b.name}: $${monthlyFromBill(b).toFixed(2)} (${b.frequency}) Next: ${nextSingleDueDate(b)}\n`;}); txt+=`Total: $${totalMonthlyBills.toFixed(2)}\n\n`; txt+="BUCKETS:\n"; buckets.forEach(b=>{ const m=monthlyFromBudget(b); txt+=`${b.name}: Budget $${m.toFixed(2)}, Spent $${b.spent.toFixed(2)}, Remaining ${(m-b.spent).toFixed(2)}\n`;}); txt+=`Total Budgeted: $${totalMonthlyBudgeted.toFixed(2)}\nSpent: $${totalMonthlySpent.toFixed(2)}\n\n`; txt+="OVERVIEW:\n"; txt+=`Remaining Now: $${monthlyRemaining.toFixed(2)}\nIf All Budgets Spent: $${projectedRemaining.toFixed(2)}\n`; const blob=new Blob([txt],{type:"text/plain"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=`summary-${selectedYear}-${String(selectedMonth+1).padStart(2,"0")}.txt`; a.click(); URL.revokeObjectURL(url); };
+        const downloadMonthlySummary = () => {
+            const label = new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+            let txt = `MONTHLY SUMMARY - ${label}\n\n`;
+            // INCOME
+            txt += "INCOME (for the month):\n";
+            recurringIncome.forEach(i => {
+                txt += `- ${i.name}: $${monthlyFromIncome(i).toFixed(2)} (${i.frequency}`;
+                if (i.nextDate) txt += `, Next: ${nextSingleDueDate(i)}`;
+                txt += `)\n`;
+            });
+            txt += `Total Income: $${totalMonthlyIncome.toFixed(2)}\n\n`;
+
+            // BUCKETS
+            txt += "BUCKETS (Budget, Spent, Remaining):\n";
+            buckets.forEach(b => {
+                const m = monthlyFromBudget(b);
+                const spent = b.spent;
+                const remaining = m - spent;
+                // List all transactions for this bucket
+                const txs = transactions.filter(t => t.bucketId === b.id);
+                txt += `- ${b.name}:\n`;
+                txt += `    Budgeted: $${m.toFixed(2)} (${b.period})\n`;
+                txt += `    Spent: $${spent.toFixed(2)}\n`;
+                txt += `    Remaining: $${remaining.toFixed(2)}\n`;
+                if (txs.length > 0) {
+                    txt += `    Transactions:\n`;
+                    txs.forEach(t => {
+                        txt += `      - ${t.date}: $${t.amount.toFixed(2)} - ${t.description}\n`;
+                    });
+                }
+            });
+            txt += `Total Budgeted: $${totalMonthlyBudgeted.toFixed(2)}\nTotal Spent: $${totalMonthlySpent.toFixed(2)}\n\n`;
+
+            // BILLS
+            txt += "BILLS (for the month):\n";
+            recurringBills.forEach(b => {
+                txt += `- ${b.name}: $${monthlyFromBill(b).toFixed(2)} (${b.frequency}`;
+                if (b.frequency === "monthly" && b.dueDay) txt += `, Due Day: ${b.dueDay}`;
+                if (b.frequency === "yearly" && b.dueMonth && b.dueDay) txt += `, Due: ${b.dueMonth}/${b.dueDay}`;
+                if (b.frequency === "weekly" && b.nextDate) txt += `, Anchor: ${b.nextDate}`;
+                txt += `, Next: ${nextSingleDueDate(b)}`;
+                txt += ")\n";
+            });
+            txt += `Total Bills: $${totalMonthlyBills.toFixed(2)}\n\n`;
+
+            // OVERVIEW
+            txt += "OVERVIEW:\n";
+            txt += `Remaining Now: $${monthlyRemaining.toFixed(2)}\n`;
+            txt += `If All Budgets Spent: $${projectedRemaining.toFixed(2)}\n`;
+
+            const blob = new Blob([txt], { type: "text/plain" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `summary-${selectedYear}-${String(selectedMonth + 1).padStart(2, "0")}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        };
 
         // ---------- Render ----------
     return (
