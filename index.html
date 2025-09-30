@@ -156,18 +156,47 @@
         const totalMonthlyIncome = recurringIncome.reduce((s, i) => s + monthlyFromIncome(i), 0);
         const totalMonthlyBills = recurringBills.reduce((s, b) => s + monthlyFromBill(b), 0);
         const totalMonthlyBudgeted = buckets.reduce((s, b) => s + monthlyFromBudget(b), 0);
-        const totalMonthlySpent = buckets.reduce((s, b) => s + b.spent, 0);
+
+        // --- Weekly bucket spent calculation ---
+        function getLastMonday(d) {
+            const date = new Date(d);
+            const day = date.getDay();
+            const diff = (day === 0 ? -6 : 1) - day; // Monday=1, Sunday=0
+            date.setDate(date.getDate() + diff);
+            date.setHours(0,0,0,0);
+            return date;
+        }
+        const now = new Date();
+        const lastMonday = getLastMonday(now);
+        // Calculate spent for each bucket
+        const bucketsWithSpent = buckets.map(b => {
+            if (b.period === "weekly") {
+                // Only sum transactions for this bucket from last Monday to today
+                const spent = transactions.filter(t => t.bucketId === b.id && new Date(t.date) >= lastMonday && new Date(t.date) <= now)
+                    .reduce((sum, t) => sum + t.amount, 0);
+                return { ...b, spent: round2(spent) };
+            }
+            return b;
+        });
+        const totalMonthlySpent = bucketsWithSpent.reduce((s, b) => s + b.spent, 0);
         const monthlyRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlySpent);
         const projectedRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlyBudgeted);
 
         // ---------- CRUD (Transactions, Buckets, Income, Bills) ----------
-        const [newTransaction, setNewTransaction] = React.useState({ bucketId: "", amount: "", description: "", date: fmtDate(new Date()) });
+        // Always set transaction default date to today
+        const todayStr = fmtDate(new Date());
+        const [newTransaction, setNewTransaction] = React.useState({ bucketId: "", amount: "", description: "", date: todayStr });
         const addTransaction = () => {
             if (!newTransaction.bucketId || !newTransaction.amount || !newTransaction.description) return;
             const tx = { id: Date.now(), bucketId: parseInt(newTransaction.bucketId), amount: round2(parseFloat(newTransaction.amount)), description: newTransaction.description, date: newTransaction.date };
             setTransactions([...transactions, tx]);
-            setBuckets(buckets.map(b => b.id===tx.bucketId?{...b,spent:round2(b.spent+tx.amount)}:b));
-            setNewTransaction({ bucketId:"", amount:"", description:"", date:fmtDate(new Date()) });
+            setBuckets(buckets.map(b => {
+                if (b.id !== tx.bucketId) return b;
+                // For weekly buckets, spent is recalculated, so just return b
+                if (b.period === "weekly") return b;
+                return { ...b, spent: round2(b.spent + tx.amount) };
+            }));
+            setNewTransaction({ bucketId: "", amount: "", description: "", date: fmtDate(new Date()) });
         };
         const deleteTransaction = (id) => {
             const tx = transactions.find(t=>t.id===id); if(!tx) return;
@@ -227,12 +256,15 @@
 
             // BUCKETS
             txt += "BUCKETS (Budget, Spent, Remaining):\n";
-            buckets.forEach(b => {
+            bucketsWithSpent.forEach(b => {
                 const m = monthlyFromBudget(b);
                 const spent = b.spent;
                 const remaining = m - spent;
-                // List all transactions for this bucket
-                const txs = transactions.filter(t => t.bucketId === b.id);
+                // List all transactions for this bucket (weekly: only from last Monday)
+                let txs = transactions.filter(t => t.bucketId === b.id);
+                if (b.period === "weekly") {
+                    txs = txs.filter(t => new Date(t.date) >= lastMonday && new Date(t.date) <= now);
+                }
                 txt += `- ${b.name}:\n`;
                 txt += `    Budgeted: $${m.toFixed(2)} (${b.period})\n`;
                 txt += `    Spent: $${spent.toFixed(2)}\n`;
@@ -346,7 +378,7 @@
             {activeTab==="buckets" && (
             <section>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6">
-                {buckets.map((b)=>{
+                {bucketsWithSpent.map((b)=>{
                     const pct = Math.min(100,(b.spent/b.budgeted)*100);
                     const remaining = round2(b.budgeted - b.spent);
                     return (
