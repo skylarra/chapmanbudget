@@ -223,10 +223,11 @@
         const [newTransaction, setNewTransaction] = React.useState({ bucketId: "", amount: "", description: "", date: todayStr });
         const addTransaction = () => {
             if (!newTransaction.bucketId || !newTransaction.amount || !newTransaction.description) return;
-            const tx = { id: Date.now(), bucketId: parseInt(newTransaction.bucketId), amount: round2(parseFloat(newTransaction.amount)), description: newTransaction.description, date: newTransaction.date };
+            const bucketIdNum = Number(newTransaction.bucketId);
+            const tx = { id: Date.now(), bucketId: bucketIdNum, amount: round2(parseFloat(newTransaction.amount)), description: newTransaction.description, date: newTransaction.date };
             setTransactions([...transactions, tx]);
             setBuckets(buckets.map(b => {
-                if (b.id !== tx.bucketId) return b;
+                if (b.id !== bucketIdNum) return b;
                 // For weekly buckets, spent is recalculated, so just return b
                 if (b.period === "weekly") return b;
                 return { ...b, spent: round2(b.spent + tx.amount) };
