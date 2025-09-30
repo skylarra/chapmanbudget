@@ -453,6 +453,7 @@
                 setRecurringIncome(parsedIncome);
                 setRecurringBills(parsedBills);
                 // setTransactions(parsedTransactions); // Skip updating transactions for now
+                e.target.value = '';
             };
             reader.readAsText(file);
         };
