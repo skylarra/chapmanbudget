@@ -17,7 +17,7 @@
 
   <script type="text/babel" data-presets="env,react">
     function App() {
-      // ---------- Utils ----------
+      // ---------------- Utils ----------------
       const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
       const currency = (n) => `$${round2(n).toFixed(2)}`;
       const pad2 = (n) => String(n).padStart(2, "0");
@@ -28,7 +28,7 @@
         return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
       };
 
-      // Parse YYYY-MM-DD -> local midnight Date (prevents UTC drift)
+      // Parse YYYY-MM-DD -> local midnight Date (prevents UTC drift + weekday shifts)
       const parseYMDLocal = (ymd) => {
         if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
         const [y, m, d] = ymd.split("-").map(Number);
@@ -54,11 +54,7 @@
         return fallback;
       };
 
-      const isMissingAnchorIncome = (i) => (i.frequency === "weekly" || i.frequency === "biweekly") && !parseYMDLocal(i.nextDate);
-      const isMissingAnchorBill = (b) => (b.frequency === "weekly") && !parseYMDLocal(b.nextDate);
-      const isMissingDateOnceIncome = (i) => (i.frequency === "once") && !parseYMDLocal(i.nextDate);
-
-      // ---------- Initial State ----------
+      // ---------------- Initial State ----------------
       const [buckets, setBuckets] = React.useState(
         loadState("buckets", [
           { id: 1, name: "Out to Eat", budgeted: 150, spent: 0, period: "weekly" },
@@ -66,6 +62,7 @@
         ])
       );
 
+      // frequencies: monthly | weekly | biweekly | once
       const [recurringIncome, setRecurringIncome] = React.useState(
         loadState("recurringIncome", [
           { id: 1, name: "Salary", amount: 3000, frequency: "monthly", nextDate: "2025-10-01" },
@@ -74,11 +71,12 @@
         ])
       );
 
+      // bills: monthly (dueDay), weekly (nextDate anchor), yearly (dueMonth 1-12 + dueDay)
       const [recurringBills, setRecurringBills] = React.useState(
         loadState("recurringBills", [
           { id: 1, name: "Rent", amount: 1200, frequency: "monthly", dueDay: 1 },
           { id: 2, name: "Phone", amount: 80, frequency: "monthly", dueDay: 15 },
-          { id: 3, name: "Car Insurance", amount: 600, frequency: "yearly", dueMonth: 6, dueDay: 15 }, // dueMonth 1-12
+          { id: 3, name: "Car Insurance", amount: 600, frequency: "yearly", dueMonth: 6, dueDay: 15 },
         ])
       );
 
@@ -89,20 +87,15 @@
       const [selectedMonth, setSelectedMonth] = React.useState(loadState("selectedMonth", today.getMonth()));
       const [selectedYear, setSelectedYear] = React.useState(loadState("selectedYear", today.getFullYear()));
 
-      // ---------- Archives ----------
-      const [archives, setArchives] = React.useState(loadState("archives", []));
-      const [selectedArchiveId, setSelectedArchiveId] = React.useState("");
-
-      // ---------- Persist state ----------
+      // ---------------- Persist ----------------
       React.useEffect(() => localStorage.setItem("buckets", JSON.stringify(buckets)), [buckets]);
       React.useEffect(() => localStorage.setItem("recurringIncome", JSON.stringify(recurringIncome)), [recurringIncome]);
       React.useEffect(() => localStorage.setItem("recurringBills", JSON.stringify(recurringBills)), [recurringBills]);
       React.useEffect(() => localStorage.setItem("transactions", JSON.stringify(transactions)), [transactions]);
       React.useEffect(() => localStorage.setItem("selectedMonth", JSON.stringify(selectedMonth)), [selectedMonth]);
       React.useEffect(() => localStorage.setItem("selectedYear", JSON.stringify(selectedYear)), [selectedYear]);
-      React.useEffect(() => localStorage.setItem("archives", JSON.stringify(archives)), [archives]);
 
-      // ---------- Reset logic (never delete transactions) ----------
+      // ---------------- Reset logic (NEVER delete transactions) ----------------
       React.useEffect(() => {
         const now = new Date();
         const lastSeen = localStorage.getItem("lastSeenMonth");
@@ -138,14 +131,14 @@
         }
       }, []);
 
-      // ---------- Calendar ----------
+      // ---------------- Calendar ----------------
       const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
       const weeksInMonth = daysInMonth / 7;
       const monthKey = `${selectedYear}-${pad2(selectedMonth + 1)}`;
       const monthStart = new Date(selectedYear, selectedMonth, 1, 0, 0, 0, 0);
       const monthEnd = new Date(selectedYear, selectedMonth, daysInMonth, 23, 59, 59, 999);
 
-      // ---------- Next due date (NO weekday drift) ----------
+      // ---------------- Next due date (weekday-safe) ----------------
       const nextSingleDueDate = (item) => {
         const today0 = floorLocalToday();
 
@@ -174,7 +167,6 @@
           const month1to12 = item.dueMonth ?? 1;
           const month0to11 = clamp(month1to12, 1, 12) - 1;
           const day = clamp(item.dueDay ?? 1, 1, 28);
-
           let cand = new Date(today0.getFullYear(), month0to11, day, 0, 0, 0, 0);
           if (cand <= today0) cand = new Date(today0.getFullYear() + 1, month0to11, day, 0, 0, 0, 0);
           return fmtDate(cand);
@@ -183,7 +175,7 @@
         return item.nextDate || fmtDate(today0);
       };
 
-      // ---------- Calendar-aware monthly amounts ----------
+      // ---------------- Monthly math (calendar-aware) ----------------
       const monthlyFromBudget = (b) => (b.period === "weekly" ? round2(b.budgeted * weeksInMonth) : round2(b.budgeted));
 
       const monthlyFromIncome = (i) => {
@@ -207,12 +199,12 @@
       const totalMonthlyBills = recurringBills.reduce((s, b) => s + monthlyFromBill(b), 0);
       const totalMonthlyBudgeted = buckets.reduce((s, b) => s + monthlyFromBudget(b), 0);
 
-      // ---------- Custom week start based on biggest repeating income’s next weekday ----------
+      // ---------------- Custom week start (based on biggest repeating income’s next weekday) ----------------
       const incomeMonthlyValue = (i) => {
         if (i.frequency === "weekly") return i.amount * weeksInMonth;
         if (i.frequency === "biweekly") return i.amount * Math.floor(daysInMonth / 14);
         if (i.frequency === "monthly") return i.amount;
-        return 0; // ignore one-time for week anchor
+        return 0; // ignore one-time for anchor
       };
 
       let weekStartDay = 1; // Monday default
@@ -222,15 +214,10 @@
       if (repeatingIncomes.length) {
         let maxIncome = repeatingIncomes[0];
         let maxValue = incomeMonthlyValue(maxIncome);
-
         for (let i = 1; i < repeatingIncomes.length; i++) {
           const val = incomeMonthlyValue(repeatingIncomes[i]);
-          if (val > maxValue) {
-            maxIncome = repeatingIncomes[i];
-            maxValue = val;
-          }
+          if (val > maxValue) { maxIncome = repeatingIncomes[i]; maxValue = val; }
         }
-
         const nextDue = parseYMDLocal(nextSingleDueDate(maxIncome)) || new Date();
         weekStartDay = nextDue.getDay();
         weekStartLabel = nextDue.toLocaleDateString("en-US", { weekday: "long" });
@@ -257,7 +244,7 @@
       const weekStart = getLastCustomWeekStart(now);
       const weekEnd = getEndOfCustomWeek(now);
 
-      // ---------- Spent derived from transactions ----------
+      // ---------------- Spent derived from transactions ----------------
       const bucketsWithSpent = buckets.map((b) => {
         if (b.period === "weekly") {
           const spent = transactions
@@ -265,7 +252,7 @@
               const txDate = parseYMDLocal(t.date);
               return t.bucketId === b.id && txDate && txDate >= weekStart && txDate <= weekEnd;
             })
-            .reduce((sum, t) => sum + t.amount, 0);
+            .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
           return { ...b, spent: round2(spent) };
         }
 
@@ -274,28 +261,16 @@
             const txDate = parseYMDLocal(t.date);
             return t.bucketId === b.id && txDate && txDate >= monthStart && txDate <= monthEnd;
           })
-          .reduce((sum, t) => sum + t.amount, 0);
+          .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
         return { ...b, spent: round2(spent) };
       });
 
-      const totalMonthlySpent = bucketsWithSpent.reduce((s, b) => s + (b.spent || 0), 0);
+      const totalMonthlySpent = bucketsWithSpent.reduce((s, b) => s + (Number(b.spent) || 0), 0);
       const monthlyRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlySpent);
       const projectedRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlyBudgeted);
 
-      // ---------- Monthly transaction summary ----------
-      const monthTransactions = transactions
-        .filter(t => {
-          const d = parseYMDLocal(t.date);
-          return d && d >= monthStart && d <= monthEnd;
-        })
-        .slice()
-        .sort((a, b) => (a.date < b.date ? 1 : -1));
-
-      const monthTxTotal = round2(monthTransactions.reduce((s, t) => s + t.amount, 0));
-      const monthTxCount = monthTransactions.length;
-
-      // ---------- Weekly cashflow (THIS week + NEXT week) ----------
+      // ---------------- Weekly cashflow: this + next ----------------
       const addDays = (d, n) => {
         const x = new Date(d);
         x.setDate(x.getDate() + n);
@@ -304,7 +279,6 @@
 
       const thisWeekStart = new Date(weekStart); thisWeekStart.setHours(0,0,0,0);
       const thisWeekEnd = new Date(weekEnd); thisWeekEnd.setHours(23,59,59,999);
-
       const nextWeekStart = addDays(thisWeekStart, 7); nextWeekStart.setHours(0,0,0,0);
       const nextWeekEnd = addDays(nextWeekStart, 6); nextWeekEnd.setHours(23,59,59,999);
 
@@ -316,47 +290,26 @@
         const name = item.name || (kind === "income" ? "Income" : "Bill");
         const amount = round2(item.amount || 0);
 
-        // once
         if (item.frequency === "once") {
           const d = parseYMDLocal(item.nextDate);
           if (d && d >= start && d <= end) {
-            out.push({
-              type: kind,
-              id: `${kind}-${item.id}-${fmtDate(d)}`,
-              name,
-              amount,
-              frequency: item.frequency,
-              date: fmtDate(d),
-            });
+            out.push({ type: kind, id: `${kind}-${item.id}-${fmtDate(d)}`, name, amount, frequency: item.frequency, date: fmtDate(d) });
           }
           return out;
         }
 
-        // weekly/biweekly
         if (item.frequency === "weekly" || item.frequency === "biweekly") {
           const step = item.frequency === "weekly" ? 7 : 14;
-          // NOTE: if anchor missing, we fall back to today (but UI warns users)
-          const anchor = parseYMDLocal(item.nextDate) || floorLocalToday();
-
-          let d = new Date(anchor);
-          d.setHours(0,0,0,0);
+          const anchor = parseYMDLocal(item.nextDate) || floorLocalToday(); // warns if missing
+          let d = new Date(anchor); d.setHours(0,0,0,0);
           while (d < start) d = addDays(d, step);
-
           while (d <= end) {
-            out.push({
-              type: kind,
-              id: `${kind}-${item.id}-${fmtDate(d)}`,
-              name,
-              amount,
-              frequency: item.frequency,
-              date: fmtDate(d),
-            });
+            out.push({ type: kind, id: `${kind}-${item.id}-${fmtDate(d)}`, name, amount, frequency: item.frequency, date: fmtDate(d) });
             d = addDays(d, step);
           }
           return out;
         }
 
-        // monthly (income uses nextDate day-of-month; bills use dueDay)
         if (item.frequency === "monthly") {
           let day;
           if (kind === "income") {
@@ -376,21 +329,11 @@
             const ymd = fmtDate(d);
             if (seen.has(ymd)) return;
             seen.add(ymd);
-            if (d >= start && d <= end) {
-              out.push({
-                type: kind,
-                id: `${kind}-${item.id}-${ymd}`,
-                name,
-                amount,
-                frequency: item.frequency,
-                date: ymd,
-              });
-            }
+            if (d >= start && d <= end) out.push({ type: kind, id: `${kind}-${item.id}-${ymd}`, name, amount, frequency: item.frequency, date: ymd });
           });
           return out;
         }
 
-        // yearly (bills only)
         if (item.frequency === "yearly") {
           const month0 = clamp(item.dueMonth ?? 1, 1, 12) - 1;
           const day = clamp(item.dueDay ?? 1, 1, 28);
@@ -405,33 +348,14 @@
             const ymd = fmtDate(d);
             if (seen.has(ymd)) return;
             seen.add(ymd);
-            if (d >= start && d <= end) {
-              out.push({
-                type: kind,
-                id: `${kind}-${item.id}-${ymd}`,
-                name,
-                amount,
-                frequency: item.frequency,
-                date: ymd,
-              });
-            }
+            if (d >= start && d <= end) out.push({ type: kind, id: `${kind}-${item.id}-${ymd}`, name, amount, frequency: item.frequency, date: ymd });
           });
           return out;
         }
 
-        // fallback: include next date if it lands in range
         const ymd = nextSingleDueDate(item);
         const d = parseYMDLocal(ymd);
-        if (d && d >= start && d <= end) {
-          out.push({
-            type: kind,
-            id: `${kind}-${item.id}-${ymd}`,
-            name,
-            amount,
-            frequency: item.frequency,
-            date: ymd,
-          });
-        }
+        if (d && d >= start && d <= end) out.push({ type: kind, id: `${kind}-${item.id}-${ymd}`, name, amount, frequency: item.frequency, date: ymd });
         return out;
       };
 
@@ -453,7 +377,11 @@
       const thisWeekTotals = totalsForEvents(thisWeekEvents);
       const nextWeekTotals = totalsForEvents(nextWeekEvents);
 
-      // ---------- Anchor warnings ----------
+      // ---------------- Warnings ----------------
+      const isMissingAnchorIncome = (i) => (i.frequency === "weekly" || i.frequency === "biweekly") && !parseYMDLocal(i.nextDate);
+      const isMissingAnchorBill = (b) => (b.frequency === "weekly") && !parseYMDLocal(b.nextDate);
+      const isMissingDateOnceIncome = (i) => (i.frequency === "once") && !parseYMDLocal(i.nextDate);
+
       const missingIncomeAnchors = recurringIncome.filter(isMissingAnchorIncome);
       const missingBillAnchors = recurringBills.filter(isMissingAnchorBill);
       const missingOnceDates = recurringIncome.filter(isMissingDateOnceIncome);
@@ -463,7 +391,7 @@
         missingBillAnchors.length > 0 ||
         missingOnceDates.length > 0;
 
-      // ---------- UI helpers ----------
+      // ---------------- UI helpers ----------------
       const getProgressColor = (spent, budgeted) => {
         const pct = budgeted > 0 ? (spent / budgeted) * 100 : 0;
         if (pct >= 100) return "bg-red-500";
@@ -482,7 +410,23 @@
         </span>
       );
 
-      // ---------- CRUD: Transactions ----------
+      const StatCard = ({ label, value, sub, tone="slate" }) => {
+        const toneMap = {
+          slate: "text-slate-800",
+          emerald: "text-emerald-700",
+          rose: "text-rose-700",
+          indigo: "text-indigo-700",
+        };
+        return (
+          <div className="bg-white rounded-2xl shadow p-4 border border-slate-100">
+            <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+            <div className={`text-2xl font-extrabold mt-1 ${toneMap[tone] || "text-slate-800"}`}>{value}</div>
+            {sub ? <div className="text-xs text-slate-500 mt-1">{sub}</div> : null}
+          </div>
+        );
+      };
+
+      // ---------------- CRUD: Transactions ----------------
       const todayStr = fmtDate(new Date());
       const [newTransaction, setNewTransaction] = React.useState({
         bucketId: "",
@@ -493,13 +437,13 @@
 
       const addTransaction = () => {
         if (!newTransaction.bucketId || !newTransaction.amount || !newTransaction.description) return;
-        const bucketIdNum = Number(newTransaction.bucketId);
 
+        const bucketIdNum = Number(newTransaction.bucketId);
         const tx = {
           id: Date.now(),
           bucketId: bucketIdNum,
           amount: round2(parseFloat(newTransaction.amount)),
-          description: newTransaction.description.trim(),
+          description: String(newTransaction.description).trim(),
           date: newTransaction.date || todayStr,
         };
 
@@ -507,11 +451,9 @@
         setNewTransaction({ bucketId: "", amount: "", description: "", date: todayStr });
       };
 
-      const deleteTransaction = (id) => {
-        setTransactions((prev) => prev.filter((t) => t.id !== id));
-      };
+      const deleteTransaction = (id) => setTransactions((prev) => prev.filter((t) => t.id !== id));
 
-      // ---------- CRUD: Buckets ----------
+      // ---------------- CRUD: Buckets ----------------
       const [newBucket, setNewBucket] = React.useState({ name: "", budgeted: "", period: "monthly" });
 
       const addBucket = () => {
@@ -533,17 +475,16 @@
       };
 
       const resetBucket = (id) => {
+        // IMPORTANT: no transaction deletion
         setBuckets((prev) => prev.map((b) => (b.id === id ? { ...b, spent: 0 } : b)));
       };
 
-      // ---------- CRUD: Income ----------
+      // ---------------- CRUD: Income ----------------
       const [newIncome, setNewIncome] = React.useState({ name: "", amount: "", frequency: "monthly", nextDate: "" });
 
       const addIncome = () => {
         if (!newIncome.name || !newIncome.amount) return;
-
-        // one-time requires a date
-        if (newIncome.frequency === "once" && !parseYMDLocal(newIncome.nextDate)) return;
+        if (newIncome.frequency === "once" && !parseYMDLocal(newIncome.nextDate)) return; // one-time must have date
 
         setRecurringIncome((prev) => [
           ...prev,
@@ -555,13 +496,12 @@
             nextDate: newIncome.nextDate || "",
           }
         ]);
-
         setNewIncome({ name: "", amount: "", frequency: "monthly", nextDate: "" });
       };
 
       const deleteIncome = (id) => setRecurringIncome((prev) => prev.filter((i) => i.id !== id));
 
-      // ---------- CRUD: Bills ----------
+      // ---------------- CRUD: Bills ----------------
       const [newBill, setNewBill] = React.useState({ name: "", amount: "", frequency: "monthly", dueDay: "", dueMonth: "", nextDate: "" });
 
       const addBill = () => {
@@ -587,7 +527,7 @@
 
       const deleteBill = (id) => setRecurringBills((prev) => prev.filter((b) => b.id !== id));
 
-      // ---------- Inline edit state ----------
+      // ---------------- Inline edit state ----------------
       const [editBucketId, setEditBucketId] = React.useState(null);
       const [editBucketAmount, setEditBucketAmount] = React.useState("");
 
@@ -600,109 +540,21 @@
       const [editTransactionId, setEditTransactionId] = React.useState(null);
       const [editTransactionAmount, setEditTransactionAmount] = React.useState("");
 
-      // ---------- Archives (kept) ----------
-      const archiveSelectedMonth = () => {
-        const txs = transactions.filter(t => {
-          const d = parseYMDLocal(t.date);
-          return d && d >= monthStart && d <= monthEnd;
-        });
+      // ---------------- Download summary (round-trip importable) ----------------
+      const JSON_START = "---BEGIN_BUDGET_BUCKETS_JSON---";
+      const JSON_END = "---END_BUDGET_BUCKETS_JSON---";
 
-        const bucketSnapshots = buckets.map(b => {
-          const spent = txs.filter(t => t.bucketId === b.id).reduce((sum, t) => sum + t.amount, 0);
-          return { ...b, spent: round2(spent) };
-        });
-
-        const incomeMonthly = round2(recurringIncome.reduce((s, i) => s + monthlyFromIncome(i), 0));
-        const billsMonthly = round2(recurringBills.reduce((s, b) => s + monthlyFromBill(b), 0));
-        const spentMonthly = round2(bucketSnapshots.reduce((s, b) => s + (b.spent || 0), 0));
-        const remainingNow = round2(incomeMonthly - billsMonthly - spentMonthly);
-
-        const snapshot = {
-          id: `${monthKey}-${Date.now()}`,
-          monthKey,
-          createdAt: new Date().toISOString(),
-          selectedYear,
-          selectedMonth,
-          buckets: bucketSnapshots,
-          recurringIncome,
-          recurringBills,
-          transactions: txs,
-          totals: { incomeMonthly, billsMonthly, spentMonthly, remainingNow }
-        };
-
-        setArchives(prev => {
-          const filtered = prev.filter(a => a.monthKey !== monthKey);
-          return [snapshot, ...filtered].sort((a, b) => (a.monthKey < b.monthKey ? 1 : -1));
-        });
-
-        setSelectedArchiveId(snapshot.id);
-      };
-
-      const loadArchive = (archiveId) => {
-        const a = archives.find(x => x.id === archiveId);
-        if (!a) return;
-
-        setSelectedYear(a.selectedYear);
-        setSelectedMonth(a.selectedMonth);
-        setBuckets(a.buckets || []);
-        setRecurringIncome(a.recurringIncome || []);
-        setRecurringBills(a.recurringBills || []);
-
-        setTransactions(prev => {
-          const seen = new Set(prev.map(t => `${t.bucketId}|${t.date}|${round2(t.amount).toFixed(2)}|${(t.description||"").trim()}`));
-          const toAdd = (a.transactions || []).filter(t => {
-            const key = `${t.bucketId}|${t.date}|${round2(t.amount).toFixed(2)}|${(t.description||"").trim()}`;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          });
-          return [...prev, ...toAdd];
-        });
-      };
-
-      const deleteArchive = (archiveId) => {
-        setArchives(prev => prev.filter(a => a.id !== archiveId));
-        if (selectedArchiveId === archiveId) setSelectedArchiveId("");
-      };
-
-      const downloadArchiveJSON = (archiveId) => {
-        const a = archives.find(x => x.id === archiveId);
-        if (!a) return;
-        const blob = new Blob([JSON.stringify(a, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `budget-archive-${a.monthKey}.json`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      };
-
-      const uploadArchiveJSON = (e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          try {
-            const obj = JSON.parse(String(ev.target.result || "{}"));
-            if (!obj || !obj.monthKey || !obj.id) throw new Error("Invalid archive file.");
-            setArchives(prev => {
-              const filtered = prev.filter(a => a.id !== obj.id && a.monthKey !== obj.monthKey);
-              return [obj, ...filtered].sort((a, b) => (a.monthKey < b.monthKey ? 1 : -1));
-            });
-            setSelectedArchiveId(obj.id);
-          } catch (err) {
-            alert("That archive file didn’t import. (Bad JSON or wrong format.)");
-          }
-          e.target.value = "";
-        };
-        reader.readAsText(file);
-      };
-
-      // ---------- Download summary ----------
       const downloadMonthlySummary = () => {
         const label = new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+        // Monthly tx slice (for display)
+        const monthTransactions = transactions.filter(t => {
+          const d = parseYMDLocal(t.date);
+          return d && d >= monthStart && d <= monthEnd;
+        }).slice().sort((a,b) => (a.date < b.date ? 1 : -1));
+
+        const monthTxTotal = round2(monthTransactions.reduce((s,t) => s + (Number(t.amount) || 0), 0));
+        const monthTxCount = monthTransactions.length;
 
         let txt = `📌 BUDGET SUMMARY — ${label}\n`;
         txt += `Month key: ${monthKey}\n`;
@@ -729,14 +581,35 @@
         }
 
         txt += `🧾 TRANSACTIONS (this month)\n`;
-        txt += `Count: ${monthTxCount}  Total: ${currency(monthTxTotal)}\n\n`;
+        txt += `Count: ${monthTxCount}  Total: ${currency(monthTxTotal)}\n`;
+        monthTransactions.slice(0, 30).forEach(t => {
+          const bname = buckets.find(b => b.id === t.bucketId)?.name || "Unknown";
+          txt += `- ${t.date}: $${round2(t.amount).toFixed(2)} · ${bname} · ${t.description}\n`;
+        });
+        if (monthTransactions.length > 30) txt += `... (${monthTransactions.length - 30} more)\n`;
+        txt += `\n`;
 
         txt += `💸 BUCKETS\n`;
         bucketsWithSpent.forEach(b => {
-          const remaining = round2(b.budgeted - b.spent);
-          txt += `- ${b.name} (${b.period})\n`;
-          txt += `  Budget: ${currency(b.budgeted)}  Spent: ${currency(b.spent)}  Remaining: ${currency(remaining)}\n\n`;
+          const remaining = round2((b.budgeted || 0) - (b.spent || 0));
+          txt += `- ${b.name} (${b.period})  Budget: ${currency(b.budgeted)}  Spent: ${currency(b.spent)}  Remaining: ${currency(remaining)}\n`;
         });
+
+        // Machine-readable payload for upload round-trip
+        const payload = {
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          selectedYear,
+          selectedMonth,
+          buckets,
+          recurringIncome,
+          recurringBills,
+          transactions, // include ALL transactions
+        };
+
+        txt += `\n${JSON_START}\n`;
+        txt += JSON.stringify(payload, null, 2);
+        txt += `\n${JSON_END}\n`;
 
         const blob = new Blob([txt], { type: "text/plain" });
         const url = URL.createObjectURL(blob);
@@ -749,24 +622,79 @@
         URL.revokeObjectURL(url);
       };
 
-      // ---------- Tiny components ----------
-      const StatCard = ({ label, value, sub, tone="slate" }) => {
-        const toneMap = {
-          slate: "text-slate-800",
-          emerald: "text-emerald-700",
-          rose: "text-rose-700",
-          indigo: "text-indigo-700",
+      // ---------------- Upload summary (imports downloaded .txt) ----------------
+      const txKey = (t) =>
+        `${t.bucketId}|${t.date}|${round2(t.amount).toFixed(2)}|${String(t.description || "").trim()}`;
+
+      const handleSummaryUpload = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const text = String(ev.target.result || "");
+            const startIdx = text.indexOf(JSON_START);
+            const endIdx = text.indexOf(JSON_END);
+
+            if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
+              alert("This file can’t be imported. Download a new summary from the updated app first.");
+              return;
+            }
+
+            const jsonStr = text.slice(startIdx + JSON_START.length, endIdx).trim();
+            const payload = JSON.parse(jsonStr);
+
+            if (!payload || typeof payload !== "object") throw new Error("Bad payload");
+            if (!Array.isArray(payload.buckets) || !Array.isArray(payload.recurringIncome) || !Array.isArray(payload.recurringBills)) {
+              throw new Error("Missing required arrays");
+            }
+
+            // Apply core state
+            setSelectedYear(Number.isFinite(payload.selectedYear) ? payload.selectedYear : selectedYear);
+            setSelectedMonth(Number.isFinite(payload.selectedMonth) ? payload.selectedMonth : selectedMonth);
+            setBuckets(payload.buckets);
+            setRecurringIncome(payload.recurringIncome);
+            setRecurringBills(payload.recurringBills);
+
+            // Merge transactions (do not delete existing)
+            if (Array.isArray(payload.transactions)) {
+              setTransactions((prev) => {
+                const seen = new Set(prev.map(txKey));
+                const toAdd = payload.transactions.filter(t => {
+                  const k = txKey(t);
+                  if (seen.has(k)) return false;
+                  seen.add(k);
+                  return true;
+                });
+                return [...prev, ...toAdd];
+              });
+            }
+
+            alert("Summary imported ✅");
+          } catch (err) {
+            alert("Could not import that summary file. Make sure it was downloaded from this app version.");
+          } finally {
+            e.target.value = "";
+          }
         };
-        return (
-          <div className="bg-white rounded-2xl shadow p-4 border border-slate-100">
-            <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-            <div className={`text-2xl font-extrabold mt-1 ${toneMap[tone] || "text-slate-800"}`}>{value}</div>
-            {sub ? <div className="text-xs text-slate-500 mt-1">{sub}</div> : null}
-          </div>
-        );
+
+        reader.readAsText(file);
       };
 
-      // ---------- Render ----------
+      // ---------------- Summary page numbers ----------------
+      const monthTransactions = transactions
+        .filter(t => {
+          const d = parseYMDLocal(t.date);
+          return d && d >= monthStart && d <= monthEnd;
+        })
+        .slice()
+        .sort((a, b) => (a.date < b.date ? 1 : -1));
+
+      const monthTxTotal = round2(monthTransactions.reduce((s, t) => s + (Number(t.amount) || 0), 0));
+      const monthTxCount = monthTransactions.length;
+
+      // ---------------- Render ----------------
       return (
         <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-sky-50 to-emerald-50">
           <div className="max-w-6xl mx-auto p-2 sm:p-4 md:p-6">
@@ -776,11 +704,11 @@
                 <div>
                   <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800">💰 Budget Buckets</h1>
                   <div className="text-sm text-slate-600 mt-1">
-                    Month: <span className="font-semibold text-slate-800">{new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" })}</span>
+                    Month: <span className="font-semibold text-slate-800">
+                      {new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+                    </span>
                     <span className="mx-2 text-slate-300">•</span>
                     Weekly start: <span className="font-semibold text-slate-800">{weekStartLabel}</span>
-                    <span className="mx-2 text-slate-300">•</span>
-                    Archives: <span className="font-semibold text-slate-800">{archives.length}</span>
                   </div>
 
                   {hasAnyAnchorWarnings && (
@@ -828,62 +756,10 @@
                     Download Summary
                   </button>
 
-                  <button
-                    onClick={archiveSelectedMonth}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded shadow text-sm"
-                  >
-                    Archive Month
-                  </button>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select
-                      value={selectedArchiveId}
-                      onChange={(e) => setSelectedArchiveId(e.target.value)}
-                      className="border rounded px-2 py-1 bg-white shadow-sm text-sm min-w-[210px]"
-                    >
-                      <option value="">Load an archive…</option>
-                      {archives.map(a => (
-                        <option key={a.id} value={a.id}>
-                          {a.monthKey} (saved {new Date(a.createdAt).toLocaleDateString()})
-                        </option>
-                      ))}
-                    </select>
-
-                    <button
-                      onClick={() => selectedArchiveId && loadArchive(selectedArchiveId)}
-                      disabled={!selectedArchiveId}
-                      className={`px-3 py-1 rounded shadow text-sm ${
-                        selectedArchiveId ? "bg-slate-800 hover:bg-slate-900 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"
-                      }`}
-                    >
-                      Load
-                    </button>
-
-                    <button
-                      onClick={() => selectedArchiveId && downloadArchiveJSON(selectedArchiveId)}
-                      disabled={!selectedArchiveId}
-                      className={`px-3 py-1 rounded shadow text-sm ${
-                        selectedArchiveId ? "bg-indigo-700 hover:bg-indigo-800 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"
-                      }`}
-                    >
-                      Export
-                    </button>
-
-                    <button
-                      onClick={() => selectedArchiveId && deleteArchive(selectedArchiveId)}
-                      disabled={!selectedArchiveId}
-                      className={`px-3 py-1 rounded shadow text-sm ${
-                        selectedArchiveId ? "bg-rose-600 hover:bg-rose-700 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"
-                      }`}
-                    >
-                      Delete
-                    </button>
-
-                    <label className="text-xs text-slate-700 font-medium cursor-pointer bg-white px-2 py-1 rounded shadow-sm border border-slate-200 hover:bg-slate-50">
-                      Import
-                      <input type="file" accept=".json" onChange={uploadArchiveJSON} className="hidden" />
-                    </label>
-                  </div>
+                  <label className="text-xs text-slate-600 font-medium cursor-pointer bg-white px-3 py-1 rounded shadow-sm border border-slate-200 hover:bg-slate-50">
+                    Upload Summary
+                    <input type="file" accept=".txt" onChange={handleSummaryUpload} className="hidden" />
+                  </label>
                 </div>
               </div>
             </header>
@@ -913,7 +789,7 @@
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                  {/* Left: Buckets table */}
+                  {/* Buckets */}
                   <div className="lg:col-span-2 bg-white rounded-2xl shadow border border-slate-100 p-4">
                     <div className="flex items-center justify-between">
                       <div>
@@ -965,9 +841,7 @@
                                   <div className="w-full bg-slate-100 h-2 rounded overflow-hidden">
                                     <div className={`${getProgressColor(b.spent, b.budgeted)} h-2`} style={{ width: `${Math.min(100, pct)}%` }} />
                                   </div>
-                                  <div className="text-xs text-slate-500 mt-1">
-                                    {Math.round(Math.min(100, pct))}% {pct >= 100 ? "— over budget" : ""}
-                                  </div>
+                                  <div className="text-xs text-slate-500 mt-1">{Math.round(Math.min(100, pct))}%</div>
                                 </td>
                               </tr>
                             );
@@ -975,9 +849,17 @@
                         </tbody>
                       </table>
                     </div>
+
+                    <div className="mt-4 p-3 rounded-xl border border-slate-100 bg-slate-50">
+                      <div className="text-xs text-slate-500">This month transactions</div>
+                      <div className="mt-1 flex items-end justify-between">
+                        <div className="text-2xl font-extrabold text-slate-800">{monthTxCount}</div>
+                        <div className="text-sm font-semibold text-slate-700">{currency(monthTxTotal)}</div>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Right: Weekly cashflow */}
+                  {/* Weekly cashflow */}
                   <div className="bg-white rounded-2xl shadow border border-slate-100 p-4">
                     <h2 className="text-lg font-extrabold text-slate-800">Weekly cashflow</h2>
                     <div className="text-xs text-slate-500 mt-1">
@@ -987,7 +869,7 @@
                     {(missingIncomeAnchors.length > 0 || missingBillAnchors.length > 0) && (
                       <div className="mt-3 p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-sm">
                         <div className="font-semibold">⚠️ Some repeating items are missing anchor dates</div>
-                        <div className="mt-1 text-xs text-amber-900">
+                        <div className="mt-1 text-xs">
                           Weekly/biweekly schedules will be “best guess” until you set an anchor date.
                         </div>
                       </div>
@@ -1082,14 +964,6 @@
                             </div>
                           </div>
                         ))}
-                      </div>
-                    </div>
-
-                    <div className="mt-4 p-3 rounded-xl border border-slate-100 bg-white">
-                      <div className="text-xs text-slate-500">This month transactions</div>
-                      <div className="mt-1 flex items-end justify-between">
-                        <div className="text-2xl font-extrabold text-slate-800">{monthTxCount}</div>
-                        <div className="text-sm font-semibold text-slate-700">{currency(monthTxTotal)}</div>
                       </div>
                     </div>
 
@@ -1300,13 +1174,9 @@
                     )}
                     {newIncome.frequency === "once" && !parseYMDLocal(newIncome.nextDate) && (
                       <div className="mt-2 text-xs text-amber-800">
-                        ⚠️ One-time income needs a date to show up in weekly cashflow and monthly totals.
+                        ⚠️ One-time income needs a date to show up correctly.
                       </div>
                     )}
-
-                    <div className="text-xs text-slate-500 mt-2">
-                      Weekly/bi-weekly: set the anchor to your payday. One-time: pick the exact date.
-                    </div>
                   </div>
                 </div>
               </section>
@@ -1318,7 +1188,6 @@
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4 sm:mb-6">
                   <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Bills</h3>
-
                     <div className="space-y-3">
                       {recurringBills
                         .slice()
@@ -1431,10 +1300,6 @@
                         ⚠️ Weekly bills need an anchor date to schedule correctly.
                       </div>
                     )}
-
-                    <div className="text-xs text-slate-500 mt-2">
-                      Monthly: due day. Weekly: anchor date. Yearly: month + day.
-                    </div>
                   </div>
                 </div>
               </section>
@@ -1542,4 +1407,3 @@
   </script>
 </body>
 </html>
-
