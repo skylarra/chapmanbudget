@@ -3,810 +3,1543 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Budget Buckets App</title>
-    <link rel="icon" type="image/jpeg" href="favicon.jpg" />
+  <title>Budget Buckets App</title>
+  <link rel="icon" type="image/jpeg" href="favicon.jpg" />
+
   <script src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
 </head>
+
 <body class="bg-gray-50">
   <div id="root"></div>
 
   <script type="text/babel" data-presets="env,react">
     function App() {
-        // ---------- Utils ----------
-        const round2 = (n) => Math.round(n * 100) / 100;
-        // Format date as YYYY-MM-DD in local time
-        const fmtDate = (d) => {
-            const date = new Date(d);
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-        };
-        const currency = (n) => `$${round2(n).toFixed(2)}`;
+      // ---------- Utils ----------
+      const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+      const currency = (n) => `$${round2(n).toFixed(2)}`;
+      const pad2 = (n) => String(n).padStart(2, "0");
+      const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
-        // ---------- Load persisted state ----------
-        const loadState = (key, fallback) => {
-            try {
-            const stored = localStorage.getItem(key);
-            if (stored) return JSON.parse(stored);
-            } catch (e) {}
-            return fallback;
-        };
+      const fmtDate = (d) => {
+        const date = new Date(d);
+        return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+      };
 
-        // ---------- Initial State ----------
-        const [buckets, setBuckets] = React.useState(
-            loadState("buckets", [
-            { id: 1, name: "Out to Eat", budgeted: 150, spent: 0, period: "weekly" },
-            { id: 2, name: "Groceries", budgeted: 400, spent: 0, period: "monthly" },
-            ])
-        );
-        const [recurringIncome, setRecurringIncome] = React.useState(
-            loadState("recurringIncome", [
-            { id: 1, name: "Salary", amount: 3000, frequency: "monthly", nextDate: "2025-10-01" },
-            { id: 2, name: "Side Hustle", amount: 500, frequency: "weekly", nextDate: "2025-10-05" },
-            ])
-        );
-        const [recurringBills, setRecurringBills] = React.useState(
-            loadState("recurringBills", [
-            { id: 1, name: "Rent", amount: 1200, frequency: "monthly", dueDay: 1 },
-            { id: 2, name: "Phone", amount: 80, frequency: "monthly", dueDay: 15 },
-            { id: 3, name: "Car Insurance", amount: 600, frequency: "yearly", dueMonth: 6, dueDay: 15 },
-            ])
-        );
-        const [transactions, setTransactions] = React.useState(loadState("transactions", []));
-        const [activeTab, setActiveTab] = React.useState("summary");
+      // Parse YYYY-MM-DD -> local midnight Date (prevents UTC drift)
+      const parseYMDLocal = (ymd) => {
+        if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+        const [y, m, d] = ymd.split("-").map(Number);
+        return new Date(y, m - 1, d, 0, 0, 0, 0);
+      };
 
-        const today = new Date();
-        const [selectedMonth, setSelectedMonth] = React.useState(
-            loadState("selectedMonth", today.getMonth())
-        );
-        const [selectedYear, setSelectedYear] = React.useState(
-            loadState("selectedYear", today.getFullYear())
-        );
+      const floorLocalToday = () => {
+        const n = new Date();
+        return new Date(n.getFullYear(), n.getMonth(), n.getDate(), 0, 0, 0, 0);
+      };
 
-        // ---------- Monthly reset ----------
-        React.useEffect(() => {
-            const now = new Date();
-            const lastSeen = localStorage.getItem("lastSeenMonth");
-            const current = `${now.getFullYear()}-${now.getMonth() + 1}`;
-            if (lastSeen !== current && now.getDate() === 1) {
-                setTransactions([]);
-                setBuckets((prev) => prev.map((b) => ({ ...b, spent: 0 })));
-                localStorage.setItem("lastSeenMonth", current);
-            } else if (!lastSeen) {
-                localStorage.setItem("lastSeenMonth", current);
-            }
-        }, []);
+      const niceDate = (ymd) => {
+        const d = parseYMDLocal(ymd);
+        if (!d) return ymd || "";
+        return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+      };
 
-        // ---------- Weekly reset for weekly buckets (spent only, not transactions) ----------
-        React.useEffect(() => {
-            // Only reset on Mondays
-            const now = new Date();
-            const isMonday = now.getDay() === 1; // 0=Sunday, 1=Monday
-            if (!isMonday) return;
-            // Week number: ISO week (Monday as first day)
-            const getWeekNumber = (d) => {
-                d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-                const dayNum = d.getUTCDay() || 7;
-                d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-                const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
-                return Math.ceil((((d - yearStart) / 86400000) + 1)/7);
-            };
-            const currentWeek = `${now.getFullYear()}-W${getWeekNumber(now)}`;
-            const lastSeenWeek = localStorage.getItem("lastSeenWeek");
-            if (lastSeenWeek !== currentWeek) {
-                setBuckets(prev => prev.map(b => b.period === "weekly" ? { ...b, spent: 0 } : b));
-                localStorage.setItem("lastSeenWeek", currentWeek);
-            }
-        }, []);
+      const loadState = (key, fallback) => {
+        try {
+          const stored = localStorage.getItem(key);
+          if (stored) return JSON.parse(stored);
+        } catch (e) {}
+        return fallback;
+      };
 
-        // ---------- Persist state ----------
-        React.useEffect(() => { localStorage.setItem("buckets", JSON.stringify(buckets)); }, [buckets]);
-        React.useEffect(() => { localStorage.setItem("recurringIncome", JSON.stringify(recurringIncome)); }, [recurringIncome]);
-        React.useEffect(() => { localStorage.setItem("recurringBills", JSON.stringify(recurringBills)); }, [recurringBills]);
-        React.useEffect(() => { localStorage.setItem("transactions", JSON.stringify(transactions)); }, [transactions]);
-        React.useEffect(() => { localStorage.setItem("selectedMonth", JSON.stringify(selectedMonth)); }, [selectedMonth]);
-        React.useEffect(() => { localStorage.setItem("selectedYear", JSON.stringify(selectedYear)); }, [selectedYear]);
+      const isMissingAnchorIncome = (i) => (i.frequency === "weekly" || i.frequency === "biweekly") && !parseYMDLocal(i.nextDate);
+      const isMissingAnchorBill = (b) => (b.frequency === "weekly") && !parseYMDLocal(b.nextDate);
+      const isMissingDateOnceIncome = (i) => (i.frequency === "once") && !parseYMDLocal(i.nextDate);
 
-        // ---------- Calendar ----------
-        const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
-        const weeksInMonth = daysInMonth / 7;
+      // ---------- Initial State ----------
+      const [buckets, setBuckets] = React.useState(
+        loadState("buckets", [
+          { id: 1, name: "Out to Eat", budgeted: 150, spent: 0, period: "weekly" },
+          { id: 2, name: "Groceries", budgeted: 400, spent: 0, period: "monthly" },
+        ])
+      );
 
-        // ---------- Next due date ----------
-        const nextSingleDueDate = (item) => {
-            const now = new Date();
-            const floorToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            if (item.frequency === "monthly") {
-                let day = item.dueDay || (item.nextDate ? new Date(item.nextDate).getDate() : 1);
-                day = Math.max(1, Math.min(28, day));
-                let cand = new Date(now.getFullYear(), now.getMonth(), day);
-                if (cand < floorToday) cand = new Date(now.getFullYear(), now.getMonth() + 1, day);
-                return fmtDate(cand);
-            }
-            if (item.frequency === "yearly") {
-                let month = item.dueMonth ?? 0;
-                let day = item.dueDay ?? 1;
-                let cand = new Date(now.getFullYear(), month, day);
-                if (cand < floorToday) cand = new Date(now.getFullYear() + 1, month, day);
-                return fmtDate(cand);
-            }
-            if (item.frequency === "weekly") {
-                const base = item.nextDate ? new Date(item.nextDate) : new Date(now);
-                let cand = new Date(base);
-                while (cand < floorToday) cand.setDate(cand.getDate() + 7);
-                return fmtDate(cand);
-            }
-            if (item.frequency === "biweekly") {
-                const base = item.nextDate ? new Date(item.nextDate) : new Date(now);
-                let cand = new Date(base);
-                while (cand < floorToday) cand.setDate(cand.getDate() + 14);
-                return fmtDate(cand);
-            }
-            return item.nextDate || fmtDate(now);
-        };
+      const [recurringIncome, setRecurringIncome] = React.useState(
+        loadState("recurringIncome", [
+          { id: 1, name: "Salary", amount: 3000, frequency: "monthly", nextDate: "2025-10-01" },
+          { id: 2, name: "Side Hustle", amount: 500, frequency: "weekly", nextDate: "2025-10-03" },
+          // { id: 3, name: "Bonus", amount: 1200, frequency: "once", nextDate: "2025-10-12" },
+        ])
+      );
 
-        // ---------- Calendar aware amounts ----------
-        const monthlyFromBudget = (b) => (b.period === "weekly" ? round2(b.budgeted * weeksInMonth) : round2(b.budgeted));
-        const monthlyFromIncome = (i) => {
-            if (i.frequency === "weekly") return round2(i.amount * weeksInMonth);
-            if (i.frequency === "biweekly") return round2(i.amount * Math.floor(daysInMonth / 14));
-            return round2(i.amount);
-        };
-        const monthlyFromBill = (b) => {
-            if (b.frequency === "weekly") return round2(b.amount * weeksInMonth);
-            if (b.frequency === "yearly") return round2(b.amount / 12);
-            return round2(b.amount);
-        };
+      const [recurringBills, setRecurringBills] = React.useState(
+        loadState("recurringBills", [
+          { id: 1, name: "Rent", amount: 1200, frequency: "monthly", dueDay: 1 },
+          { id: 2, name: "Phone", amount: 80, frequency: "monthly", dueDay: 15 },
+          { id: 3, name: "Car Insurance", amount: 600, frequency: "yearly", dueMonth: 6, dueDay: 15 }, // dueMonth 1-12
+        ])
+      );
 
-        const totalMonthlyIncome = recurringIncome.reduce((s, i) => s + monthlyFromIncome(i), 0);
-        const totalMonthlyBills = recurringBills.reduce((s, b) => s + monthlyFromBill(b), 0);
-        const totalMonthlyBudgeted = buckets.reduce((s, b) => s + monthlyFromBudget(b), 0);
+      const [transactions, setTransactions] = React.useState(loadState("transactions", []));
+      const [activeTab, setActiveTab] = React.useState("summary");
 
-        // --- Weekly bucket spent calculation ---
-        function getLastMonday(d) {
-            const date = new Date(d);
-            const day = date.getDay();
-            const diff = (day === 0 ? -6 : 1) - day; // Monday=1, Sunday=0
-            date.setDate(date.getDate() + diff);
-            date.setHours(0,0,0,0);
-            return date;
-        }
-        function getEndOfWeek(d) {
-            const date = new Date(d);
-            const day = date.getDay();
-            // Sunday is 0, so days to add = (7 - day) % 7
-            const daysToAdd = (7 - day) % 7;
-            date.setDate(date.getDate() + daysToAdd);
-            date.setHours(23,59,59,999);
-            return date;
-        }
+      const today = new Date();
+      const [selectedMonth, setSelectedMonth] = React.useState(loadState("selectedMonth", today.getMonth()));
+      const [selectedYear, setSelectedYear] = React.useState(loadState("selectedYear", today.getFullYear()));
+
+      // ---------- Archives ----------
+      const [archives, setArchives] = React.useState(loadState("archives", []));
+      const [selectedArchiveId, setSelectedArchiveId] = React.useState("");
+
+      // ---------- Persist state ----------
+      React.useEffect(() => localStorage.setItem("buckets", JSON.stringify(buckets)), [buckets]);
+      React.useEffect(() => localStorage.setItem("recurringIncome", JSON.stringify(recurringIncome)), [recurringIncome]);
+      React.useEffect(() => localStorage.setItem("recurringBills", JSON.stringify(recurringBills)), [recurringBills]);
+      React.useEffect(() => localStorage.setItem("transactions", JSON.stringify(transactions)), [transactions]);
+      React.useEffect(() => localStorage.setItem("selectedMonth", JSON.stringify(selectedMonth)), [selectedMonth]);
+      React.useEffect(() => localStorage.setItem("selectedYear", JSON.stringify(selectedYear)), [selectedYear]);
+      React.useEffect(() => localStorage.setItem("archives", JSON.stringify(archives)), [archives]);
+
+      // ---------- Reset logic (never delete transactions) ----------
+      React.useEffect(() => {
         const now = new Date();
-        const lastMonday = getLastMonday(now);
-        const endOfWeek = getEndOfWeek(now);
-        // Calculate spent for each bucket
-        // Helper to parse YYYY-MM-DD as local date
-        function parseLocalDate(str) {
-            if (!str) return null;
-            const [year, month, day] = str.split('-').map(Number);
-            return new Date(year, month - 1, day);
+        const lastSeen = localStorage.getItem("lastSeenMonth");
+        const current = `${now.getFullYear()}-${now.getMonth() + 1}`;
+        if (!lastSeen) {
+          localStorage.setItem("lastSeenMonth", current);
+          return;
         }
-        const bucketsWithSpent = buckets.map(b => {
-            if (b.period === "weekly") {
-                // Only sum transactions for this bucket from last Monday (inclusive) to end of this Sunday (inclusive)
-                const spent = transactions.filter(t => {
-                    const txDate = parseLocalDate(t.date);
-                    return t.bucketId === b.id && txDate && txDate >= lastMonday && txDate <= endOfWeek;
-                }).reduce((sum, t) => sum + t.amount, 0);
-                return { ...b, spent: round2(spent) };
-            } else if (b.period === "monthly") {
-                // Only sum transactions for this bucket from the 1st to the last day of the selected month (inclusive)
-                const monthStart = new Date(selectedYear, selectedMonth, 1, 0, 0, 0, 0);
-                const monthEnd = new Date(selectedYear, selectedMonth, daysInMonth, 23, 59, 59, 999);
-                const spent = transactions.filter(t => {
-                    const txDate = parseLocalDate(t.date);
-                    return t.bucketId === b.id && txDate && txDate >= monthStart && txDate <= monthEnd;
-                }).reduce((sum, t) => sum + t.amount, 0);
-                return { ...b, spent: round2(spent) };
+        if (lastSeen !== current && now.getDate() === 1) {
+          setBuckets((prev) => prev.map((b) => ({ ...b, spent: 0 })));
+          localStorage.setItem("lastSeenMonth", current);
+        }
+      }, []);
+
+      React.useEffect(() => {
+        const now = new Date();
+        const isMonday = now.getDay() === 1;
+        if (!isMonday) return;
+
+        const getISOWeek = (d) => {
+          const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+          const dayNum = date.getUTCDay() || 7;
+          date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+          const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+          return Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+        };
+
+        const currentWeek = `${now.getFullYear()}-W${getISOWeek(now)}`;
+        const lastSeenWeek = localStorage.getItem("lastSeenWeek");
+        if (lastSeenWeek !== currentWeek) {
+          setBuckets((prev) => prev.map((b) => (b.period === "weekly" ? { ...b, spent: 0 } : b)));
+          localStorage.setItem("lastSeenWeek", currentWeek);
+        }
+      }, []);
+
+      // ---------- Calendar ----------
+      const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+      const weeksInMonth = daysInMonth / 7;
+      const monthKey = `${selectedYear}-${pad2(selectedMonth + 1)}`;
+      const monthStart = new Date(selectedYear, selectedMonth, 1, 0, 0, 0, 0);
+      const monthEnd = new Date(selectedYear, selectedMonth, daysInMonth, 23, 59, 59, 999);
+
+      // ---------- Next due date (NO weekday drift) ----------
+      const nextSingleDueDate = (item) => {
+        const today0 = floorLocalToday();
+
+        if (item.frequency === "once") {
+          const d = parseYMDLocal(item.nextDate);
+          return d ? fmtDate(d) : "";
+        }
+
+        if (item.frequency === "weekly" || item.frequency === "biweekly") {
+          const intervalDays = item.frequency === "weekly" ? 7 : 14;
+          const anchor = parseYMDLocal(item.nextDate) || today0;
+          let cand = new Date(anchor);
+          while (cand <= today0) cand.setDate(cand.getDate() + intervalDays);
+          return fmtDate(cand);
+        }
+
+        if (item.frequency === "monthly") {
+          let day = item.dueDay ?? (parseYMDLocal(item.nextDate)?.getDate() ?? 1);
+          day = clamp(day, 1, 28);
+          let cand = new Date(today0.getFullYear(), today0.getMonth(), day, 0, 0, 0, 0);
+          if (cand <= today0) cand = new Date(today0.getFullYear(), today0.getMonth() + 1, day, 0, 0, 0, 0);
+          return fmtDate(cand);
+        }
+
+        if (item.frequency === "yearly") {
+          const month1to12 = item.dueMonth ?? 1;
+          const month0to11 = clamp(month1to12, 1, 12) - 1;
+          const day = clamp(item.dueDay ?? 1, 1, 28);
+
+          let cand = new Date(today0.getFullYear(), month0to11, day, 0, 0, 0, 0);
+          if (cand <= today0) cand = new Date(today0.getFullYear() + 1, month0to11, day, 0, 0, 0, 0);
+          return fmtDate(cand);
+        }
+
+        return item.nextDate || fmtDate(today0);
+      };
+
+      // ---------- Calendar-aware monthly amounts ----------
+      const monthlyFromBudget = (b) => (b.period === "weekly" ? round2(b.budgeted * weeksInMonth) : round2(b.budgeted));
+
+      const monthlyFromIncome = (i) => {
+        if (i.frequency === "weekly") return round2(i.amount * weeksInMonth);
+        if (i.frequency === "biweekly") return round2(i.amount * Math.floor(daysInMonth / 14));
+        if (i.frequency === "once") {
+          const d = parseYMDLocal(i.nextDate);
+          if (!d) return 0;
+          return (d >= monthStart && d <= monthEnd) ? round2(i.amount) : 0;
+        }
+        return round2(i.amount); // monthly
+      };
+
+      const monthlyFromBill = (b) => {
+        if (b.frequency === "weekly") return round2(b.amount * weeksInMonth);
+        if (b.frequency === "yearly") return round2(b.amount / 12);
+        return round2(b.amount); // monthly
+      };
+
+      const totalMonthlyIncome = recurringIncome.reduce((s, i) => s + monthlyFromIncome(i), 0);
+      const totalMonthlyBills = recurringBills.reduce((s, b) => s + monthlyFromBill(b), 0);
+      const totalMonthlyBudgeted = buckets.reduce((s, b) => s + monthlyFromBudget(b), 0);
+
+      // ---------- Custom week start based on biggest repeating income’s next weekday ----------
+      const incomeMonthlyValue = (i) => {
+        if (i.frequency === "weekly") return i.amount * weeksInMonth;
+        if (i.frequency === "biweekly") return i.amount * Math.floor(daysInMonth / 14);
+        if (i.frequency === "monthly") return i.amount;
+        return 0; // ignore one-time for week anchor
+      };
+
+      let weekStartDay = 1; // Monday default
+      let weekStartLabel = "Monday";
+
+      const repeatingIncomes = recurringIncome.filter(i => i.frequency !== "once");
+      if (repeatingIncomes.length) {
+        let maxIncome = repeatingIncomes[0];
+        let maxValue = incomeMonthlyValue(maxIncome);
+
+        for (let i = 1; i < repeatingIncomes.length; i++) {
+          const val = incomeMonthlyValue(repeatingIncomes[i]);
+          if (val > maxValue) {
+            maxIncome = repeatingIncomes[i];
+            maxValue = val;
+          }
+        }
+
+        const nextDue = parseYMDLocal(nextSingleDueDate(maxIncome)) || new Date();
+        weekStartDay = nextDue.getDay();
+        weekStartLabel = nextDue.toLocaleDateString("en-US", { weekday: "long" });
+      }
+
+      const getLastCustomWeekStart = (d) => {
+        const date = new Date(d);
+        date.setHours(0, 0, 0, 0);
+        const day = date.getDay();
+        const diff = (day >= weekStartDay) ? (day - weekStartDay) : (7 - (weekStartDay - day));
+        date.setDate(date.getDate() - diff);
+        return date;
+      };
+
+      const getEndOfCustomWeek = (d) => {
+        const start = getLastCustomWeekStart(d);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        end.setHours(23, 59, 59, 999);
+        return end;
+      };
+
+      const now = new Date();
+      const weekStart = getLastCustomWeekStart(now);
+      const weekEnd = getEndOfCustomWeek(now);
+
+      // ---------- Spent derived from transactions ----------
+      const bucketsWithSpent = buckets.map((b) => {
+        if (b.period === "weekly") {
+          const spent = transactions
+            .filter((t) => {
+              const txDate = parseYMDLocal(t.date);
+              return t.bucketId === b.id && txDate && txDate >= weekStart && txDate <= weekEnd;
+            })
+            .reduce((sum, t) => sum + t.amount, 0);
+          return { ...b, spent: round2(spent) };
+        }
+
+        const spent = transactions
+          .filter((t) => {
+            const txDate = parseYMDLocal(t.date);
+            return t.bucketId === b.id && txDate && txDate >= monthStart && txDate <= monthEnd;
+          })
+          .reduce((sum, t) => sum + t.amount, 0);
+
+        return { ...b, spent: round2(spent) };
+      });
+
+      const totalMonthlySpent = bucketsWithSpent.reduce((s, b) => s + (b.spent || 0), 0);
+      const monthlyRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlySpent);
+      const projectedRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlyBudgeted);
+
+      // ---------- Monthly transaction summary ----------
+      const monthTransactions = transactions
+        .filter(t => {
+          const d = parseYMDLocal(t.date);
+          return d && d >= monthStart && d <= monthEnd;
+        })
+        .slice()
+        .sort((a, b) => (a.date < b.date ? 1 : -1));
+
+      const monthTxTotal = round2(monthTransactions.reduce((s, t) => s + t.amount, 0));
+      const monthTxCount = monthTransactions.length;
+
+      // ---------- Weekly cashflow (THIS week + NEXT week) ----------
+      const addDays = (d, n) => {
+        const x = new Date(d);
+        x.setDate(x.getDate() + n);
+        return x;
+      };
+
+      const thisWeekStart = new Date(weekStart); thisWeekStart.setHours(0,0,0,0);
+      const thisWeekEnd = new Date(weekEnd); thisWeekEnd.setHours(23,59,59,999);
+
+      const nextWeekStart = addDays(thisWeekStart, 7); nextWeekStart.setHours(0,0,0,0);
+      const nextWeekEnd = addDays(nextWeekStart, 6); nextWeekEnd.setHours(23,59,59,999);
+
+      const listOccurrencesInRange = (item, kind, rangeStart, rangeEnd) => {
+        const out = [];
+        const start = new Date(rangeStart); start.setHours(0,0,0,0);
+        const end = new Date(rangeEnd); end.setHours(23,59,59,999);
+
+        const name = item.name || (kind === "income" ? "Income" : "Bill");
+        const amount = round2(item.amount || 0);
+
+        // once
+        if (item.frequency === "once") {
+          const d = parseYMDLocal(item.nextDate);
+          if (d && d >= start && d <= end) {
+            out.push({
+              type: kind,
+              id: `${kind}-${item.id}-${fmtDate(d)}`,
+              name,
+              amount,
+              frequency: item.frequency,
+              date: fmtDate(d),
+            });
+          }
+          return out;
+        }
+
+        // weekly/biweekly
+        if (item.frequency === "weekly" || item.frequency === "biweekly") {
+          const step = item.frequency === "weekly" ? 7 : 14;
+          // NOTE: if anchor missing, we fall back to today (but UI warns users)
+          const anchor = parseYMDLocal(item.nextDate) || floorLocalToday();
+
+          let d = new Date(anchor);
+          d.setHours(0,0,0,0);
+          while (d < start) d = addDays(d, step);
+
+          while (d <= end) {
+            out.push({
+              type: kind,
+              id: `${kind}-${item.id}-${fmtDate(d)}`,
+              name,
+              amount,
+              frequency: item.frequency,
+              date: fmtDate(d),
+            });
+            d = addDays(d, step);
+          }
+          return out;
+        }
+
+        // monthly (income uses nextDate day-of-month; bills use dueDay)
+        if (item.frequency === "monthly") {
+          let day;
+          if (kind === "income") {
+            const anchor = parseYMDLocal(item.nextDate);
+            day = clamp(anchor ? anchor.getDate() : 1, 1, 28);
+          } else {
+            day = clamp(item.dueDay ?? 1, 1, 28);
+          }
+
+          const candidates = [
+            new Date(start.getFullYear(), start.getMonth(), day, 0,0,0,0),
+            new Date(end.getFullYear(), end.getMonth(), day, 0,0,0,0),
+          ];
+
+          const seen = new Set();
+          candidates.forEach(d => {
+            const ymd = fmtDate(d);
+            if (seen.has(ymd)) return;
+            seen.add(ymd);
+            if (d >= start && d <= end) {
+              out.push({
+                type: kind,
+                id: `${kind}-${item.id}-${ymd}`,
+                name,
+                amount,
+                frequency: item.frequency,
+                date: ymd,
+              });
             }
-            return b;
+          });
+          return out;
+        }
+
+        // yearly (bills only)
+        if (item.frequency === "yearly") {
+          const month0 = clamp(item.dueMonth ?? 1, 1, 12) - 1;
+          const day = clamp(item.dueDay ?? 1, 1, 28);
+
+          const candidates = [
+            new Date(start.getFullYear(), month0, day, 0,0,0,0),
+            new Date(end.getFullYear(), month0, day, 0,0,0,0),
+          ];
+
+          const seen = new Set();
+          candidates.forEach(d => {
+            const ymd = fmtDate(d);
+            if (seen.has(ymd)) return;
+            seen.add(ymd);
+            if (d >= start && d <= end) {
+              out.push({
+                type: kind,
+                id: `${kind}-${item.id}-${ymd}`,
+                name,
+                amount,
+                frequency: item.frequency,
+                date: ymd,
+              });
+            }
+          });
+          return out;
+        }
+
+        // fallback: include next date if it lands in range
+        const ymd = nextSingleDueDate(item);
+        const d = parseYMDLocal(ymd);
+        if (d && d >= start && d <= end) {
+          out.push({
+            type: kind,
+            id: `${kind}-${item.id}-${ymd}`,
+            name,
+            amount,
+            frequency: item.frequency,
+            date: ymd,
+          });
+        }
+        return out;
+      };
+
+      const weekEvents = (rangeStart, rangeEnd) => {
+        const items = [];
+        recurringIncome.forEach(i => items.push(...listOccurrencesInRange(i, "income", rangeStart, rangeEnd)));
+        recurringBills.forEach(b => items.push(...listOccurrencesInRange(b, "bill", rangeStart, rangeEnd)));
+        return items.sort((a,b) => (a.date > b.date ? 1 : -1) || (a.type > b.type ? 1 : -1));
+      };
+
+      const totalsForEvents = (arr) => {
+        const income = round2(arr.filter(x => x.type === "income").reduce((s,x) => s + x.amount, 0));
+        const bills  = round2(arr.filter(x => x.type === "bill").reduce((s,x) => s + x.amount, 0));
+        return { income, bills, leftover: round2(income - bills) };
+      };
+
+      const thisWeekEvents = weekEvents(thisWeekStart, thisWeekEnd);
+      const nextWeekEvents = weekEvents(nextWeekStart, nextWeekEnd);
+      const thisWeekTotals = totalsForEvents(thisWeekEvents);
+      const nextWeekTotals = totalsForEvents(nextWeekEvents);
+
+      // ---------- Anchor warnings ----------
+      const missingIncomeAnchors = recurringIncome.filter(isMissingAnchorIncome);
+      const missingBillAnchors = recurringBills.filter(isMissingAnchorBill);
+      const missingOnceDates = recurringIncome.filter(isMissingDateOnceIncome);
+
+      const hasAnyAnchorWarnings =
+        missingIncomeAnchors.length > 0 ||
+        missingBillAnchors.length > 0 ||
+        missingOnceDates.length > 0;
+
+      // ---------- UI helpers ----------
+      const getProgressColor = (spent, budgeted) => {
+        const pct = budgeted > 0 ? (spent / budgeted) * 100 : 0;
+        if (pct >= 100) return "bg-red-500";
+        if (pct >= 80) return "bg-yellow-500";
+        return "bg-green-500";
+      };
+
+      const badge = (kind) => {
+        if (kind === "income") return "bg-emerald-100 text-emerald-700 border-emerald-200";
+        return "bg-rose-100 text-rose-700 border-rose-200";
+      };
+
+      const WarnPill = ({ text }) => (
+        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border bg-amber-50 text-amber-800 border-amber-200">
+          ⚠️ {text}
+        </span>
+      );
+
+      // ---------- CRUD: Transactions ----------
+      const todayStr = fmtDate(new Date());
+      const [newTransaction, setNewTransaction] = React.useState({
+        bucketId: "",
+        amount: "",
+        description: "",
+        date: todayStr
+      });
+
+      const addTransaction = () => {
+        if (!newTransaction.bucketId || !newTransaction.amount || !newTransaction.description) return;
+        const bucketIdNum = Number(newTransaction.bucketId);
+
+        const tx = {
+          id: Date.now(),
+          bucketId: bucketIdNum,
+          amount: round2(parseFloat(newTransaction.amount)),
+          description: newTransaction.description.trim(),
+          date: newTransaction.date || todayStr,
+        };
+
+        setTransactions((prev) => [...prev, tx]);
+        setNewTransaction({ bucketId: "", amount: "", description: "", date: todayStr });
+      };
+
+      const deleteTransaction = (id) => {
+        setTransactions((prev) => prev.filter((t) => t.id !== id));
+      };
+
+      // ---------- CRUD: Buckets ----------
+      const [newBucket, setNewBucket] = React.useState({ name: "", budgeted: "", period: "monthly" });
+
+      const addBucket = () => {
+        if (!newBucket.name || !newBucket.budgeted) return;
+        const b = {
+          id: Date.now(),
+          name: newBucket.name.trim(),
+          budgeted: round2(parseFloat(newBucket.budgeted)),
+          spent: 0,
+          period: newBucket.period,
+        };
+        setBuckets((prev) => [...prev, b]);
+        setNewBucket({ name: "", budgeted: "", period: "monthly" });
+      };
+
+      const deleteBucket = (id) => {
+        setBuckets((prev) => prev.filter((b) => b.id !== id));
+        setTransactions((prev) => prev.filter((t) => t.bucketId !== id));
+      };
+
+      const resetBucket = (id) => {
+        setBuckets((prev) => prev.map((b) => (b.id === id ? { ...b, spent: 0 } : b)));
+      };
+
+      // ---------- CRUD: Income ----------
+      const [newIncome, setNewIncome] = React.useState({ name: "", amount: "", frequency: "monthly", nextDate: "" });
+
+      const addIncome = () => {
+        if (!newIncome.name || !newIncome.amount) return;
+
+        // one-time requires a date
+        if (newIncome.frequency === "once" && !parseYMDLocal(newIncome.nextDate)) return;
+
+        setRecurringIncome((prev) => [
+          ...prev,
+          {
+            id: Date.now(),
+            name: newIncome.name.trim(),
+            amount: round2(parseFloat(newIncome.amount)),
+            frequency: newIncome.frequency,
+            nextDate: newIncome.nextDate || "",
+          }
+        ]);
+
+        setNewIncome({ name: "", amount: "", frequency: "monthly", nextDate: "" });
+      };
+
+      const deleteIncome = (id) => setRecurringIncome((prev) => prev.filter((i) => i.id !== id));
+
+      // ---------- CRUD: Bills ----------
+      const [newBill, setNewBill] = React.useState({ name: "", amount: "", frequency: "monthly", dueDay: "", dueMonth: "", nextDate: "" });
+
+      const addBill = () => {
+        if (!newBill.name || !newBill.amount) return;
+
+        const bill = {
+          id: Date.now(),
+          name: newBill.name.trim(),
+          amount: round2(parseFloat(newBill.amount)),
+          frequency: newBill.frequency,
+        };
+
+        if (newBill.frequency === "monthly") bill.dueDay = clamp(parseInt(newBill.dueDay || "1", 10), 1, 28);
+        if (newBill.frequency === "yearly") {
+          bill.dueMonth = clamp(parseInt(newBill.dueMonth || "1", 10), 1, 12);
+          bill.dueDay = clamp(parseInt(newBill.dueDay || "1", 10), 1, 28);
+        }
+        if (newBill.frequency === "weekly") bill.nextDate = newBill.nextDate || "";
+
+        setRecurringBills((prev) => [...prev, bill]);
+        setNewBill({ name: "", amount: "", frequency: "monthly", dueDay: "", dueMonth: "", nextDate: "" });
+      };
+
+      const deleteBill = (id) => setRecurringBills((prev) => prev.filter((b) => b.id !== id));
+
+      // ---------- Inline edit state ----------
+      const [editBucketId, setEditBucketId] = React.useState(null);
+      const [editBucketAmount, setEditBucketAmount] = React.useState("");
+
+      const [editIncomeId, setEditIncomeId] = React.useState(null);
+      const [editIncomeAmount, setEditIncomeAmount] = React.useState("");
+
+      const [editBillId, setEditBillId] = React.useState(null);
+      const [editBillAmount, setEditBillAmount] = React.useState("");
+
+      const [editTransactionId, setEditTransactionId] = React.useState(null);
+      const [editTransactionAmount, setEditTransactionAmount] = React.useState("");
+
+      // ---------- Archives (kept) ----------
+      const archiveSelectedMonth = () => {
+        const txs = transactions.filter(t => {
+          const d = parseYMDLocal(t.date);
+          return d && d >= monthStart && d <= monthEnd;
         });
-        const totalMonthlySpent = bucketsWithSpent.reduce((s, b) => s + b.spent, 0);
-        const monthlyRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlySpent);
-        const projectedRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlyBudgeted);
 
-        // ---------- CRUD (Transactions, Buckets, Income, Bills) ----------
-        // Always set transaction default date to today
-        const todayStr = fmtDate(new Date());
-        const [newTransaction, setNewTransaction] = React.useState({ bucketId: "", amount: "", description: "", date: todayStr });
-        const addTransaction = () => {
-            if (!newTransaction.bucketId || !newTransaction.amount || !newTransaction.description) return;
-            const bucketIdNum = Number(newTransaction.bucketId);
-            const tx = { id: Date.now(), bucketId: bucketIdNum, amount: round2(parseFloat(newTransaction.amount)), description: newTransaction.description, date: newTransaction.date };
-            setTransactions([...transactions, tx]);
-            setBuckets(buckets.map(b => {
-                if (b.id !== bucketIdNum) return b;
-                // For weekly buckets, spent is recalculated, so just return b
-                if (b.period === "weekly") return b;
-                return { ...b, spent: round2(b.spent + tx.amount) };
-            }));
-            setNewTransaction({ bucketId: "", amount: "", description: "", date: fmtDate(new Date()) });
-        };
-        const deleteTransaction = (id) => {
-            const tx = transactions.find(t=>t.id===id); if(!tx) return;
-            setBuckets(buckets.map(b=>b.id===tx.bucketId?{...b,spent:Math.max(0,round2(b.spent-tx.amount))}:b));
-            setTransactions(transactions.filter(t=>t.id!==id));
+        const bucketSnapshots = buckets.map(b => {
+          const spent = txs.filter(t => t.bucketId === b.id).reduce((sum, t) => sum + t.amount, 0);
+          return { ...b, spent: round2(spent) };
+        });
+
+        const incomeMonthly = round2(recurringIncome.reduce((s, i) => s + monthlyFromIncome(i), 0));
+        const billsMonthly = round2(recurringBills.reduce((s, b) => s + monthlyFromBill(b), 0));
+        const spentMonthly = round2(bucketSnapshots.reduce((s, b) => s + (b.spent || 0), 0));
+        const remainingNow = round2(incomeMonthly - billsMonthly - spentMonthly);
+
+        const snapshot = {
+          id: `${monthKey}-${Date.now()}`,
+          monthKey,
+          createdAt: new Date().toISOString(),
+          selectedYear,
+          selectedMonth,
+          buckets: bucketSnapshots,
+          recurringIncome,
+          recurringBills,
+          transactions: txs,
+          totals: { incomeMonthly, billsMonthly, spentMonthly, remainingNow }
         };
 
-        const [newBucket,setNewBucket]=React.useState({name:"",budgeted:"",period:"monthly"});
-        const addBucket=()=>{ if(!newBucket.name||!newBucket.budgeted)return; const b={id:Date.now(),...newBucket,budgeted:round2(parseFloat(newBucket.budgeted)),spent:0}; setBuckets([...buckets,b]); setNewBucket({name:"",budgeted:"",period:"monthly"}); };
-        const deleteBucket=id=>{ setBuckets(buckets.filter(b=>b.id!==id)); setTransactions(transactions.filter(t=>t.bucketId!==id)); };
-        const resetBucket=id=>{ setBuckets(buckets.map(b=>b.id===id?{...b,spent:0}:b)); setTransactions(transactions.filter(t=>t.bucketId!==id)); };
+        setArchives(prev => {
+          const filtered = prev.filter(a => a.monthKey !== monthKey);
+          return [snapshot, ...filtered].sort((a, b) => (a.monthKey < b.monthKey ? 1 : -1));
+        });
 
-        const [newIncome,setNewIncome]=React.useState({name:"",amount:"",frequency:"monthly",nextDate:""});
-        const addIncome=()=>{ if(!newIncome.name||!newIncome.amount)return; setRecurringIncome([...recurringIncome,{id:Date.now(),...newIncome,amount:round2(parseFloat(newIncome.amount))}]); setNewIncome({name:"",amount:"",frequency:"monthly",nextDate:""}); };
-        const deleteIncome=id=>setRecurringIncome(recurringIncome.filter(i=>i.id!==id));
+        setSelectedArchiveId(snapshot.id);
+      };
 
-        const [newBill,setNewBill]=React.useState({name:"",amount:"",frequency:"monthly",dueDay:"",dueMonth:"",nextDate:""});
-        const addBill=()=>{
-            if(!newBill.name||!newBill.amount)return;
-            let b={id:Date.now(),...newBill,amount:round2(parseFloat(newBill.amount))};
-            if(newBill.frequency==="monthly") b.dueDay=parseInt(newBill.dueDay);
-            if(newBill.frequency==="yearly") {
-                b.dueDay=parseInt(newBill.dueDay);
-                b.dueMonth=parseInt(newBill.dueMonth);
-            }
-            setRecurringBills([...recurringBills,b]);
-            setNewBill({name:"",amount:"",frequency:"monthly",dueDay:"",dueMonth:"",nextDate:""});
-        };
-        const deleteBill=id=>setRecurringBills(recurringBills.filter(b=>b.id!==id));
+      const loadArchive = (archiveId) => {
+        const a = archives.find(x => x.id === archiveId);
+        if (!a) return;
 
-        // ---------- Edit State for Inline Amount Editing ----------
-        const [editBucketId, setEditBucketId] = React.useState(null);
-        const [editBucketAmount, setEditBucketAmount] = React.useState("");
-        const [editIncomeId, setEditIncomeId] = React.useState(null);
-        const [editIncomeAmount, setEditIncomeAmount] = React.useState("");
-        const [editBillId, setEditBillId] = React.useState(null);
-        const [editBillAmount, setEditBillAmount] = React.useState("");
-        const [editTransactionId, setEditTransactionId] = React.useState(null);
-        const [editTransactionAmount, setEditTransactionAmount] = React.useState("");
+        setSelectedYear(a.selectedYear);
+        setSelectedMonth(a.selectedMonth);
+        setBuckets(a.buckets || []);
+        setRecurringIncome(a.recurringIncome || []);
+        setRecurringBills(a.recurringBills || []);
 
-        // ---------- UI helpers ----------
-        const getProgressColor=(spent,budgeted)=>{const pct=(spent/budgeted)*100; if(pct>=100) return "bg-red-500"; if(pct>=80) return "bg-yellow-500"; return "bg-green-500";};
-        const Chip = ({text,color="blue"}) => (<span className={`inline-block text-xs px-2 py-0.5 rounded-full bg-${color}-100 text-${color}-700 border border-${color}-200`}>{text}</span>);
+        setTransactions(prev => {
+          const seen = new Set(prev.map(t => `${t.bucketId}|${t.date}|${round2(t.amount).toFixed(2)}|${(t.description||"").trim()}`));
+          const toAdd = (a.transactions || []).filter(t => {
+            const key = `${t.bucketId}|${t.date}|${round2(t.amount).toFixed(2)}|${(t.description||"").trim()}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          return [...prev, ...toAdd];
+        });
+      };
 
-        // ---------- Download summary ----------
-        const downloadMonthlySummary = () => {
-            const label = new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
-            let txt = `MONTHLY SUMMARY - ${label}\n\n`;
-            // INCOME
-            txt += "INCOME (for the month):\n";
-            recurringIncome.forEach(i => {
-                txt += `- ${i.name}: $${i.amount.toFixed(2)} (${i.frequency}`;
-                if (i.nextDate) txt += `, Next: ${nextSingleDueDate(i)}`;
-                txt += `)\n`;
+      const deleteArchive = (archiveId) => {
+        setArchives(prev => prev.filter(a => a.id !== archiveId));
+        if (selectedArchiveId === archiveId) setSelectedArchiveId("");
+      };
+
+      const downloadArchiveJSON = (archiveId) => {
+        const a = archives.find(x => x.id === archiveId);
+        if (!a) return;
+        const blob = new Blob([JSON.stringify(a, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `budget-archive-${a.monthKey}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      };
+
+      const uploadArchiveJSON = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const obj = JSON.parse(String(ev.target.result || "{}"));
+            if (!obj || !obj.monthKey || !obj.id) throw new Error("Invalid archive file.");
+            setArchives(prev => {
+              const filtered = prev.filter(a => a.id !== obj.id && a.monthKey !== obj.monthKey);
+              return [obj, ...filtered].sort((a, b) => (a.monthKey < b.monthKey ? 1 : -1));
             });
-            txt += `Total Income (monthly): $${totalMonthlyIncome.toFixed(2)}\n\n`;
-
-            // BUCKETS
-            txt += "BUCKETS (Budget, Spent, Remaining):\n";
-            bucketsWithSpent.forEach(b => {
-                const spent = b.spent;
-                const remaining = b.budgeted - spent;
-                // List all transactions for this bucket (weekly: only from last Monday to Sunday)
-                let txs = transactions.filter(t => t.bucketId === b.id);
-                if (b.period === "weekly") {
-                    txs = txs.filter(t => {
-                        const txDate = parseLocalDate(t.date);
-                        return txDate && txDate >= lastMonday && txDate <= endOfWeek;
-                    });
-                }
-                txt += `- ${b.name}:\n`;
-                txt += `    Budgeted: $${b.budgeted.toFixed(2)} (${b.period})\n`;
-                txt += `    Spent: $${spent.toFixed(2)}\n`;
-                txt += `    Remaining: $${remaining.toFixed(2)}\n`;
-                if (txs.length > 0) {
-                    txt += `    Transactions:\n`;
-                    txs.forEach(t => {
-                        txt += `      - ${t.date}: $${t.amount.toFixed(2)} - ${t.description}\n`;
-                    });
-                }
-            });
-            txt += `Total Budgeted (monthly): $${totalMonthlyBudgeted.toFixed(2)}\nTotal Spent (monthly): $${totalMonthlySpent.toFixed(2)}\n\n`;
-
-            // BILLS
-            txt += "BILLS (for the month):\n";
-            recurringBills.forEach(b => {
-                txt += `- ${b.name}: $${b.amount.toFixed(2)} (${b.frequency}`;
-                if (b.frequency === "monthly" && b.dueDay) txt += `, Due Day: ${b.dueDay}`;
-                if (b.frequency === "yearly" && b.dueMonth && b.dueDay) txt += `, Due: ${b.dueMonth}/${b.dueDay}`;
-                if (b.frequency === "weekly" && b.nextDate) txt += `, Anchor: ${b.nextDate}`;
-                txt += `, Next: ${nextSingleDueDate(b)}`;
-                txt += ")\n";
-            });
-            txt += `Total Bills (monthly): $${totalMonthlyBills.toFixed(2)}\n\n`;
-
-            // OVERVIEW
-            txt += "OVERVIEW:\n";
-            txt += `Remaining Now (monthly): $${monthlyRemaining.toFixed(2)}\n`;
-            txt += `If All Budgets Spent (monthly): $${projectedRemaining.toFixed(2)}\n`;
-
-            const blob = new Blob([txt], { type: "text/plain" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `summary-${selectedYear}-${String(selectedMonth + 1).padStart(2, "0")}.txt`;
-            document.body.appendChild(a); // Required for Safari
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            setSelectedArchiveId(obj.id);
+          } catch (err) {
+            alert("That archive file didn’t import. (Bad JSON or wrong format.)");
+          }
+          e.target.value = "";
         };
+        reader.readAsText(file);
+      };
 
-        // ---------- Upload summary ----------
-        const handleSummaryUpload = (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                const text = event.target.result;
-                // Parse the summary file
-                // --- INCOME ---
-                const incomeSection = text.match(/INCOME \(for the month\):([\s\S]*?)Total Income(?: \(monthly\))?:/);
-                let parsedIncome = [];
-                if (incomeSection) {
-                    const lines = incomeSection[1].split('\n').map(l=>l.trim()).filter(l=>l.startsWith('- '));
-                    parsedIncome = lines.map(line => {
-                        // - Salary: $900.00 (weekly, Next: 2025-10-01)
-                        const m = line.match(/^- (.*?): \$(\d+(?:\.\d+)?) \((\w+)(?:, Next: ([^\)]+))?\)/);
-                        if (!m) return null;
-                        return {
-                            id: Date.now() + Math.random(),
-                            name: m[1],
-                            amount: parseFloat(m[2]),
-                            frequency: m[3],
-                            nextDate: m[4] || ""
-                        };
-                    }).filter(Boolean);
-                }
+      // ---------- Download summary ----------
+      const downloadMonthlySummary = () => {
+        const label = new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
-                // --- BUCKETS ---
-                const bucketsSection = text.match(/BUCKETS \(Budget, Spent, Remaining\):([\s\S]*?)Total Budgeted(?: \(monthly\))?:/);
-                let parsedBuckets = [];
-                let parsedTransactions = [];
-                let bucketNameToId = {};
-                if (bucketsSection) {
-                    // Split by lines, then group lines by bucket (start with '- ' and not a transaction)
-                    const lines = bucketsSection[1].split('\n').map(l=>l.trim());
-                    let currentBucket = null;
-                    let currentTxs = [];
-                    for (let i = 0; i < lines.length; ++i) {
-                        const line = lines[i];
-                        // Only treat as bucket if '- ' and NOT a transaction line
-                        if (line.startsWith('- ') && !line.match(/^- (\d{4}-\d{2}-\d{2}): \$(\d+(?:\.\d+)?) - /)) {
-                            // Save previous bucket if exists
-                            if (currentBucket) {
-                                // Assign bucketId to txs
-                                currentTxs.forEach(tx => tx.bucketId = currentBucket.id);
-                                parsedBuckets.push(currentBucket);
-                                parsedTransactions.push(...currentTxs);
-                            }
-                            // New bucket
-                            const name = line.slice(2).replace(/:$/, "");
-                            const bucketId = Date.now() + Math.random();
-                            currentBucket = { id: bucketId, name, budgeted: 0, spent: 0, period: "monthly" };
-                            bucketNameToId[name] = bucketId;
-                            currentTxs = [];
-                        } else if (line.startsWith('Budgeted:')) {
-                            const m = line.match(/Budgeted: \$(\d+(?:\.\d+)?) \((\w+)\)/);
-                            if (m && currentBucket) {
-                                currentBucket.budgeted = parseFloat(m[1]);
-                                currentBucket.period = m[2];
-                            }
-                        } else if (line.startsWith('Transactions:')) {
-                            // Transactions will follow
-                        } else if (line.match(/^- (\d{4}-\d{2}-\d{2}): \$(\d+(?:\.\d+)?) - (.*)/)) {
-                            // Transaction line
-                            const txm = line.match(/- (\d{4}-\d{2}-\d{2}): \$(\d+(?:\.\d+)?) - (.*)/);
-                            if (txm && currentBucket) {
-                                currentTxs.push({
-                                    id: Date.now() + Math.random(),
-                                    date: txm[1],
-                                    amount: parseFloat(txm[2]),
-                                    description: txm[3]
-                                });
-                            }
-                        }
-                    }
-                    // Push last bucket
-                    if (currentBucket) {
-                        currentTxs.forEach(tx => tx.bucketId = currentBucket.id);
-                        parsedBuckets.push(currentBucket);
-                        parsedTransactions.push(...currentTxs);
-                    }
-                }
+        let txt = `📌 BUDGET SUMMARY — ${label}\n`;
+        txt += `Month key: ${monthKey}\n`;
+        txt += `Weekly buckets start on: ${weekStartLabel}\n`;
+        txt += `------------------------------------------------------------\n\n`;
 
-                // --- BILLS ---
-                const billsSection = text.match(/BILLS \(for the month\):([\s\S]*?)Total Bills(?: \(monthly\))?:/);
-                let parsedBills = [];
-                if (billsSection) {
-                    const lines = billsSection[1].split('\n').map(l=>l.trim()).filter(l=>l.startsWith('- '));
-                    parsedBills = lines.map(line => {
-                        // - Rent: $1200.00 (monthly, Due Day: 1, Next: 2025-10-01)
-                        const m = line.match(/^- (.*?): \$(\d+(?:\.\d+)?) \((\w+)(?:, Due Day: (\d+))?(?:, Due: (\d+)\/(\d+))?(?:, Anchor: ([^,]+))?, Next: ([^\)]+)\)/);
-                        if (!m) return null;
-                        return {
-                            id: Date.now() + Math.random(),
-                            name: m[1],
-                            amount: parseFloat(m[2]),
-                            frequency: m[3],
-                            dueDay: m[4] ? parseInt(m[4]) : undefined,
-                            dueMonth: m[5] ? parseInt(m[5]) : undefined,
-                            // m[6] is dueDay for yearly, m[7] is anchor for weekly
-                            nextDate: m[7] || "",
-                        };
-                    }).filter(Boolean);
-                }
+        txt += `✅ OVERVIEW\n`;
+        txt += `Income (monthly est.): ${currency(totalMonthlyIncome)}\n`;
+        txt += `Bills  (monthly est.): -${currency(totalMonthlyBills).slice(1)}\n`;
+        txt += `Spent (this month/week): -${currency(totalMonthlySpent).slice(1)}\n`;
+        txt += `Remaining now: ${currency(monthlyRemaining)}\n`;
+        txt += `If all budgets spent: ${currency(projectedRemaining)}\n\n`;
 
-                // Only update buckets, income, and bills. Do not update transactions.
-                setBuckets(parsedBuckets);
-                setRecurringIncome(parsedIncome);
-                setRecurringBills(parsedBills);
-                // setTransactions(parsedTransactions); // Skip updating transactions for now
-                e.target.value = '';
-            };
-            reader.readAsText(file);
+        txt += `🗓 WEEKLY CASHFLOW\n`;
+        txt += `This week (${fmtDate(thisWeekStart)} → ${fmtDate(thisWeekEnd)}): Income ${currency(thisWeekTotals.income)}, Bills -${currency(thisWeekTotals.bills).slice(1)}, Leftover ${currency(thisWeekTotals.leftover)}\n`;
+        txt += `Next week (${fmtDate(nextWeekStart)} → ${fmtDate(nextWeekEnd)}): Income ${currency(nextWeekTotals.income)}, Bills -${currency(nextWeekTotals.bills).slice(1)}, Leftover ${currency(nextWeekTotals.leftover)}\n\n`;
+
+        if (hasAnyAnchorWarnings) {
+          txt += `⚠️ WARNINGS\n`;
+          if (missingIncomeAnchors.length) txt += `- Weekly/biweekly incomes missing anchor date: ${missingIncomeAnchors.map(x => x.name).join(", ")}\n`;
+          if (missingBillAnchors.length) txt += `- Weekly bills missing anchor date: ${missingBillAnchors.map(x => x.name).join(", ")}\n`;
+          if (missingOnceDates.length) txt += `- One-time incomes missing date: ${missingOnceDates.map(x => x.name).join(", ")}\n`;
+          txt += `\n`;
+        }
+
+        txt += `🧾 TRANSACTIONS (this month)\n`;
+        txt += `Count: ${monthTxCount}  Total: ${currency(monthTxTotal)}\n\n`;
+
+        txt += `💸 BUCKETS\n`;
+        bucketsWithSpent.forEach(b => {
+          const remaining = round2(b.budgeted - b.spent);
+          txt += `- ${b.name} (${b.period})\n`;
+          txt += `  Budget: ${currency(b.budgeted)}  Spent: ${currency(b.spent)}  Remaining: ${currency(remaining)}\n\n`;
+        });
+
+        const blob = new Blob([txt], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `summary-${monthKey}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+
+      // ---------- Tiny components ----------
+      const StatCard = ({ label, value, sub, tone="slate" }) => {
+        const toneMap = {
+          slate: "text-slate-800",
+          emerald: "text-emerald-700",
+          rose: "text-rose-700",
+          indigo: "text-indigo-700",
         };
+        return (
+          <div className="bg-white rounded-2xl shadow p-4 border border-slate-100">
+            <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+            <div className={`text-2xl font-extrabold mt-1 ${toneMap[tone] || "text-slate-800"}`}>{value}</div>
+            {sub ? <div className="text-xs text-slate-500 mt-1">{sub}</div> : null}
+          </div>
+        );
+      };
 
-        // ---------- Render ----------
-    return (
+      // ---------- Render ----------
+      return (
         <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-sky-50 to-emerald-50">
-        <div className="max-w-6xl mx-auto p-2 sm:p-4 md:p-6">
-            <header className="flex items-center justify-between mb-4 sm:mb-6">
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800">💰 Budget Buckets</h1>
-            <div className="flex flex-wrap items-center gap-2">
-                <select
-                value={selectedMonth}
-                onChange={(e)=>setSelectedMonth(parseInt(e.target.value))}
-                className="border rounded px-2 py-1 bg-white shadow-sm text-sm min-w-[110px]"
-                >
-                {Array.from({length:12},(_,i)=>
-                    <option key={i} value={i}>{new Date(2000,i).toLocaleString("en-US",{month:"long"})}</option>
-                )}
-                </select>
-                <input
-                type="number"
-                value={selectedYear}
-                onChange={(e)=>setSelectedYear(parseInt(e.target.value))}
-                className="border rounded px-2 py-1 w-20 sm:w-24 bg-white shadow-sm text-sm"
-                />
-                <button onClick={downloadMonthlySummary} className="ml-0 sm:ml-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded shadow text-sm"> 
-                Download Summary
-                </button>
-                <label className="ml-2 text-xs text-slate-600 font-medium cursor-pointer bg-slate-100 px-2 py-1 rounded shadow-sm border border-slate-200 hover:bg-slate-200">
-                    Upload Summary
-                    <input type="file" accept=".txt" onChange={handleSummaryUpload} className="hidden" />
-                </label>
-            </div>
+          <div className="max-w-6xl mx-auto p-2 sm:p-4 md:p-6">
+
+            <header className="mb-4 sm:mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800">💰 Budget Buckets</h1>
+                  <div className="text-sm text-slate-600 mt-1">
+                    Month: <span className="font-semibold text-slate-800">{new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" })}</span>
+                    <span className="mx-2 text-slate-300">•</span>
+                    Weekly start: <span className="font-semibold text-slate-800">{weekStartLabel}</span>
+                    <span className="mx-2 text-slate-300">•</span>
+                    Archives: <span className="font-semibold text-slate-800">{archives.length}</span>
+                  </div>
+
+                  {hasAnyAnchorWarnings && (
+                    <div className="mt-3 p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-900">
+                      <div className="font-semibold text-sm">⚠️ Setup warnings (fix these for accurate weekly cashflow)</div>
+                      <ul className="mt-1 text-sm list-disc ml-5">
+                        {missingIncomeAnchors.length > 0 && (
+                          <li>Weekly/biweekly income missing anchor date: <span className="font-semibold">{missingIncomeAnchors.map(x => x.name).join(", ")}</span></li>
+                        )}
+                        {missingBillAnchors.length > 0 && (
+                          <li>Weekly bills missing anchor date: <span className="font-semibold">{missingBillAnchors.map(x => x.name).join(", ")}</span></li>
+                        )}
+                        {missingOnceDates.length > 0 && (
+                          <li>One-time income missing date: <span className="font-semibold">{missingOnceDates.map(x => x.name).join(", ")}</span></li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(parseInt(e.target.value, 10))}
+                    className="border rounded px-2 py-1 bg-white shadow-sm text-sm min-w-[120px]"
+                  >
+                    {Array.from({ length: 12 }, (_, i) =>
+                      <option key={i} value={i}>
+                        {new Date(2000, i).toLocaleString("en-US", { month: "long" })}
+                      </option>
+                    )}
+                  </select>
+
+                  <input
+                    type="number"
+                    value={selectedYear}
+                    onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
+                    className="border rounded px-2 py-1 w-24 bg-white shadow-sm text-sm"
+                  />
+
+                  <button
+                    onClick={downloadMonthlySummary}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded shadow text-sm"
+                  >
+                    Download Summary
+                  </button>
+
+                  <button
+                    onClick={archiveSelectedMonth}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded shadow text-sm"
+                  >
+                    Archive Month
+                  </button>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={selectedArchiveId}
+                      onChange={(e) => setSelectedArchiveId(e.target.value)}
+                      className="border rounded px-2 py-1 bg-white shadow-sm text-sm min-w-[210px]"
+                    >
+                      <option value="">Load an archive…</option>
+                      {archives.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.monthKey} (saved {new Date(a.createdAt).toLocaleDateString()})
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      onClick={() => selectedArchiveId && loadArchive(selectedArchiveId)}
+                      disabled={!selectedArchiveId}
+                      className={`px-3 py-1 rounded shadow text-sm ${
+                        selectedArchiveId ? "bg-slate-800 hover:bg-slate-900 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                      }`}
+                    >
+                      Load
+                    </button>
+
+                    <button
+                      onClick={() => selectedArchiveId && downloadArchiveJSON(selectedArchiveId)}
+                      disabled={!selectedArchiveId}
+                      className={`px-3 py-1 rounded shadow text-sm ${
+                        selectedArchiveId ? "bg-indigo-700 hover:bg-indigo-800 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                      }`}
+                    >
+                      Export
+                    </button>
+
+                    <button
+                      onClick={() => selectedArchiveId && deleteArchive(selectedArchiveId)}
+                      disabled={!selectedArchiveId}
+                      className={`px-3 py-1 rounded shadow text-sm ${
+                        selectedArchiveId ? "bg-rose-600 hover:bg-rose-700 text-white" : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                      }`}
+                    >
+                      Delete
+                    </button>
+
+                    <label className="text-xs text-slate-700 font-medium cursor-pointer bg-white px-2 py-1 rounded shadow-sm border border-slate-200 hover:bg-slate-50">
+                      Import
+                      <input type="file" accept=".json" onChange={uploadArchiveJSON} className="hidden" />
+                    </label>
+                  </div>
+                </div>
+              </div>
             </header>
 
             <nav className="flex flex-wrap gap-2 mb-4 sm:mb-6">
-            {["summary","buckets","income","bills","transactions"].map(tab=>
+              {["summary", "buckets", "income", "bills", "transactions"].map(tab =>
                 <button
-                key={tab}
-                onClick={()=>setActiveTab(tab)}
-                className={`px-3 py-1 rounded-full text-sm shadow ${activeTab===tab?"bg-indigo-600 text-white":"bg-white text-slate-700 hover:bg-slate-50"}`}
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-3 py-1 rounded-full text-sm shadow ${
+                    activeTab === tab ? "bg-indigo-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
                 >
-                {tab.charAt(0).toUpperCase()+tab.slice(1)}
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </button>
-            )}
+              )}
             </nav>
 
-            {activeTab==="summary" && (
-            <section>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-6">
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <div className="text-slate-500 text-sm">Income</div>
-                    <div className="text-2xl font-semibold text-slate-800">{currency(totalMonthlyIncome)}</div>
-                </div>
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <div className="text-slate-500 text-sm">Bills</div>
-                    <div className="text-2xl font-semibold text-rose-600">-{currency(totalMonthlyBills).slice(1)}</div>
-                </div>
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <div className="text-slate-500 text-sm">Spent</div>
-                    <div className="text-2xl font-semibold text-rose-600">-{currency(totalMonthlySpent).slice(1)}</div>
-                </div>
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <div className="text-slate-500 text-sm">Remaining Now</div>
-                    <div className={`text-2xl font-semibold ${monthlyRemaining>=0?"text-emerald-600":"text-rose-600"}`}>{currency(monthlyRemaining)}</div>
-                </div>
+            {/* -------------------- SUMMARY -------------------- */}
+            {activeTab === "summary" && (
+              <section className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                  <StatCard label="Income (monthly est.)" value={currency(totalMonthlyIncome)} sub="One-time income counts only if dated in this month" tone="emerald" />
+                  <StatCard label="Bills (monthly est.)" value={`-${currency(totalMonthlyBills).slice(1)}`} sub="Calendar-aware estimate" tone="rose" />
+                  <StatCard label="Spent (this month/week)" value={`-${currency(totalMonthlySpent).slice(1)}`} sub="Monthly buckets = month • Weekly = this week" tone="rose" />
+                  <StatCard label="Remaining now" value={currency(monthlyRemaining)} sub="Income − Bills − Spent" tone={monthlyRemaining >= 0 ? "emerald" : "rose"} />
                 </div>
 
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                <div className="flex items-center justify-between">
-                    <div className="text-slate-700 font-semibold">If All Budgets Spent</div>
-                    <div className={`text-lg font-bold ${projectedRemaining>=0?"text-emerald-600":"text-rose-600"}`}>{currency(projectedRemaining)}</div>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  {/* Left: Buckets table */}
+                  <div className="lg:col-span-2 bg-white rounded-2xl shadow border border-slate-100 p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h2 className="text-lg font-extrabold text-slate-800">Buckets at a glance</h2>
+                        <div className="text-xs text-slate-500 mt-1">
+                          Monthly buckets show {monthKey}. Weekly buckets show {fmtDate(weekStart)} → {fmtDate(weekEnd)}.
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs text-slate-500">If all budgets spent</div>
+                        <div className={`text-lg font-extrabold ${projectedRemaining >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                          {currency(projectedRemaining)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                            <th className="py-2 pr-2">Bucket</th>
+                            <th className="py-2 pr-2">Period</th>
+                            <th className="py-2 pr-2">Budget</th>
+                            <th className="py-2 pr-2">Spent</th>
+                            <th className="py-2 pr-2">Remaining</th>
+                            <th className="py-2">Progress</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bucketsWithSpent.map(b => {
+                            const remaining = round2((b.budgeted || 0) - (b.spent || 0));
+                            const pct = b.budgeted > 0 ? clamp((b.spent / b.budgeted) * 100, 0, 130) : 0;
+                            return (
+                              <tr key={b.id} className="border-t border-slate-100">
+                                <td className="py-3 pr-2 font-semibold text-slate-800">{b.name}</td>
+                                <td className="py-3 pr-2">
+                                  <span className={`text-xs px-2 py-0.5 rounded-full border ${
+                                    b.period === "weekly" ? "bg-sky-50 text-sky-700 border-sky-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  }`}>
+                                    {b.period}
+                                  </span>
+                                </td>
+                                <td className="py-3 pr-2 text-slate-700">{currency(b.budgeted)}</td>
+                                <td className="py-3 pr-2 text-slate-700">{currency(b.spent)}</td>
+                                <td className={`py-3 pr-2 font-semibold ${remaining >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                                  {currency(remaining)}
+                                </td>
+                                <td className="py-3">
+                                  <div className="w-full bg-slate-100 h-2 rounded overflow-hidden">
+                                    <div className={`${getProgressColor(b.spent, b.budgeted)} h-2`} style={{ width: `${Math.min(100, pct)}%` }} />
+                                  </div>
+                                  <div className="text-xs text-slate-500 mt-1">
+                                    {Math.round(Math.min(100, pct))}% {pct >= 100 ? "— over budget" : ""}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Right: Weekly cashflow */}
+                  <div className="bg-white rounded-2xl shadow border border-slate-100 p-4">
+                    <h2 className="text-lg font-extrabold text-slate-800">Weekly cashflow</h2>
+                    <div className="text-xs text-slate-500 mt-1">
+                      Based on your custom week start: <span className="font-semibold text-slate-700">{weekStartLabel}</span>
+                    </div>
+
+                    {(missingIncomeAnchors.length > 0 || missingBillAnchors.length > 0) && (
+                      <div className="mt-3 p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-sm">
+                        <div className="font-semibold">⚠️ Some repeating items are missing anchor dates</div>
+                        <div className="mt-1 text-xs text-amber-900">
+                          Weekly/biweekly schedules will be “best guess” until you set an anchor date.
+                        </div>
+                      </div>
+                    )}
+
+                    {/* THIS WEEK */}
+                    <div className="mt-4 p-3 rounded-2xl border border-slate-100 bg-slate-50">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs uppercase tracking-wide text-slate-500">This week</div>
+                          <div className="text-sm font-semibold text-slate-800 mt-1">
+                            {niceDate(fmtDate(thisWeekStart))} → {niceDate(fmtDate(thisWeekEnd))}
+                          </div>
+                        </div>
+                        <div className={`text-base font-extrabold ${thisWeekTotals.leftover >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                          {currency(thisWeekTotals.leftover)}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <div className="p-2 rounded-xl bg-white border border-slate-100">
+                          <div className="text-xs text-slate-500">Income</div>
+                          <div className="text-sm font-extrabold text-emerald-700">+{currency(thisWeekTotals.income).slice(1)}</div>
+                        </div>
+                        <div className="p-2 rounded-xl bg-white border border-slate-100">
+                          <div className="text-xs text-slate-500">Bills</div>
+                          <div className="text-sm font-extrabold text-rose-700">-{currency(thisWeekTotals.bills).slice(1)}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        {thisWeekEvents.length === 0 ? (
+                          <div className="text-sm text-slate-500">No income or bills this week.</div>
+                        ) : thisWeekEvents.map(e => (
+                          <div key={e.id} className="flex items-center justify-between text-sm">
+                            <div className="text-slate-700">
+                              <span className="font-semibold">{niceDate(e.date)}</span>
+                              <span className="text-slate-400"> · </span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full border ${badge(e.type)} mr-2`}>
+                                {e.type === "income" ? "INCOME" : "BILL"}
+                              </span>
+                              {e.name}
+                            </div>
+                            <div className={`font-extrabold ${e.type === "income" ? "text-emerald-700" : "text-rose-700"}`}>
+                              {e.type === "income" ? "+" : "-"}{currency(e.amount).slice(1)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* NEXT WEEK */}
+                    <div className="mt-4 p-3 rounded-2xl border border-slate-100 bg-slate-50">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs uppercase tracking-wide text-slate-500">Next week</div>
+                          <div className="text-sm font-semibold text-slate-800 mt-1">
+                            {niceDate(fmtDate(nextWeekStart))} → {niceDate(fmtDate(nextWeekEnd))}
+                          </div>
+                        </div>
+                        <div className={`text-base font-extrabold ${nextWeekTotals.leftover >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                          {currency(nextWeekTotals.leftover)}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <div className="p-2 rounded-xl bg-white border border-slate-100">
+                          <div className="text-xs text-slate-500">Income</div>
+                          <div className="text-sm font-extrabold text-emerald-700">+{currency(nextWeekTotals.income).slice(1)}</div>
+                        </div>
+                        <div className="p-2 rounded-xl bg-white border border-slate-100">
+                          <div className="text-xs text-slate-500">Bills</div>
+                          <div className="text-sm font-extrabold text-rose-700">-{currency(nextWeekTotals.bills).slice(1)}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        {nextWeekEvents.length === 0 ? (
+                          <div className="text-sm text-slate-500">No income or bills next week.</div>
+                        ) : nextWeekEvents.map(e => (
+                          <div key={e.id} className="flex items-center justify-between text-sm">
+                            <div className="text-slate-700">
+                              <span className="font-semibold">{niceDate(e.date)}</span>
+                              <span className="text-slate-400"> · </span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full border ${badge(e.type)} mr-2`}>
+                                {e.type === "income" ? "INCOME" : "BILL"}
+                              </span>
+                              {e.name}
+                            </div>
+                            <div className={`font-extrabold ${e.type === "income" ? "text-emerald-700" : "text-rose-700"}`}>
+                              {e.type === "income" ? "+" : "-"}{currency(e.amount).slice(1)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 p-3 rounded-xl border border-slate-100 bg-white">
+                      <div className="text-xs text-slate-500">This month transactions</div>
+                      <div className="mt-1 flex items-end justify-between">
+                        <div className="text-2xl font-extrabold text-slate-800">{monthTxCount}</div>
+                        <div className="text-sm font-semibold text-slate-700">{currency(monthTxTotal)}</div>
+                      </div>
+                    </div>
+
+                  </div>
                 </div>
-                <div className="text-xs text-slate-500 mt-2">{daysInMonth} days · {weeksInMonth.toFixed(2)} weeks</div>
-                </div>
-            </section>
+              </section>
             )}
 
-            {activeTab==="buckets" && (
-            <section>
+            {/* -------------------- BUCKETS -------------------- */}
+            {activeTab === "buckets" && (
+              <section>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6">
-                {bucketsWithSpent.map((b)=>{
-                    const pct = Math.min(100,(b.spent/b.budgeted)*100);
+                  {bucketsWithSpent.map((b) => {
+                    const pct = b.budgeted > 0 ? Math.min(100, (b.spent / b.budgeted) * 100) : 0;
                     const remaining = round2(b.budgeted - b.spent);
+
                     return (
-                    <div key={b.id} className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
+                      <div key={b.id} className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                         <div className="flex items-center justify-between mb-1">
-                        <h3 className="font-semibold text-slate-800">{b.name}</h3>
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${b.period==='weekly'?'bg-sky-100 text-sky-700':'bg-emerald-100 text-emerald-700'}`}>{b.period}</span>
+                          <h3 className="font-semibold text-slate-800">{b.name}</h3>
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${b.period === "weekly" ? "bg-sky-100 text-sky-700" : "bg-emerald-100 text-emerald-700"}`}>
+                            {b.period}{b.period === "weekly" ? ` (starts ${weekStartLabel})` : ""}
+                          </span>
                         </div>
+
                         <div className="flex items-center justify-between text-sm text-slate-600 mb-2">
-                        <div>Spent: <span className="font-medium text-slate-800">{currency(b.spent)}</span></div>
-                        <div>Budget: {editBucketId === b.id ? (
-                            <>
-                            <input type="number" className="border rounded px-1 py-0.5 text-sm w-20 mr-1" value={editBucketAmount} onChange={e=>setEditBucketAmount(e.target.value)} />
-                            <button className="text-xs text-indigo-600 font-semibold mr-1" onClick={()=>{
-                                setBuckets(buckets.map(bk => bk.id === b.id ? { ...bk, budgeted: round2(parseFloat(editBucketAmount)) } : bk));
-                                setEditBucketId(null);}}>Save</button>
-                            <button className="text-xs text-slate-400" onClick={()=>setEditBucketId(null)}>Cancel</button>
-                            </>
-                        ) : (
-                            <span className="font-medium text-slate-800 cursor-pointer underline decoration-dotted" onClick={()=>{setEditBucketId(b.id);setEditBucketAmount(b.budgeted);}}>{currency(b.budgeted)}</span>
-                        )}</div>
+                          <div>Spent: <span className="font-medium text-slate-800">{currency(b.spent)}</span></div>
+                          <div>
+                            Budget:{" "}
+                            {editBucketId === b.id ? (
+                              <>
+                                <input
+                                  type="number"
+                                  className="border rounded px-1 py-0.5 text-sm w-20 mr-1"
+                                  value={editBucketAmount}
+                                  onChange={(e) => setEditBucketAmount(e.target.value)}
+                                />
+                                <button
+                                  className="text-xs text-indigo-600 font-semibold mr-1"
+                                  onClick={() => {
+                                    const val = round2(parseFloat(editBucketAmount));
+                                    if (!Number.isFinite(val) || val < 0) return;
+                                    setBuckets((prev) => prev.map(bk => bk.id === b.id ? { ...bk, budgeted: val } : bk));
+                                    setEditBucketId(null);
+                                  }}
+                                >
+                                  Save
+                                </button>
+                                <button className="text-xs text-slate-400" onClick={() => setEditBucketId(null)}>Cancel</button>
+                              </>
+                            ) : (
+                              <span
+                                className="font-medium text-slate-800 cursor-pointer underline decoration-dotted"
+                                onClick={() => { setEditBucketId(b.id); setEditBucketAmount(String(b.budgeted)); }}
+                              >
+                                {currency(b.budgeted)}
+                              </span>
+                            )}
+                          </div>
                         </div>
+
                         <div className="w-full bg-slate-100 h-2 rounded overflow-hidden">
-                        <div className={`${getProgressColor(b.spent,b.budgeted)} h-2`} style={{ width: `${pct}%` }} />
+                          <div className={`${getProgressColor(b.spent, b.budgeted)} h-2`} style={{ width: `${pct}%` }} />
                         </div>
+
                         <div className="mt-2 text-sm">
-                        <span className={`${remaining>=0?'text-emerald-600':'text-rose-600'} font-medium`}>{currency(remaining)}</span>
-                        <span className="text-slate-500"> {remaining>=0? 'left' : 'over'}</span>
+                          <span className={`${remaining >= 0 ? "text-emerald-600" : "text-rose-600"} font-medium`}>{currency(remaining)}</span>
+                          <span className="text-slate-500"> {remaining >= 0 ? "left" : "over"}</span>
                         </div>
+
                         <div className="mt-3 flex items-center justify-between">
-                        <div className="text-xs text-slate-500">Monthly (calendar-aware): <span className="font-semibold text-slate-700">{currency(monthlyFromBudget(b))}</span></div>
-                        <div className="flex gap-2">
-                            <button onClick={()=>resetBucket(b.id)} className="px-2 py-1 text-xs rounded bg-sky-100 text-sky-700 hover:bg-sky-200">Reset</button>
-                            <button onClick={()=>deleteBucket(b.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
+                          <div className="text-xs text-slate-500">
+                            Monthly (calendar-aware): <span className="font-semibold text-slate-700">{currency(monthlyFromBudget(b))}</span>
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={() => resetBucket(b.id)} className="px-2 py-1 text-xs rounded bg-sky-100 text-sky-700 hover:bg-sky-200">Reset</button>
+                            <button onClick={() => deleteBucket(b.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
+                          </div>
                         </div>
-                        </div>
-                    </div>
+                      </div>
                     );
-                })}
+                  })}
                 </div>
 
                 <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                <h3 className="font-semibold text-slate-800 mb-3">Add Bucket</h3>
-                <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={e => {e.preventDefault();addBucket();}}>
+                  <h3 className="font-semibold text-slate-800 mb-3">Add Bucket</h3>
+                  <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={(e) => { e.preventDefault(); addBucket(); }}>
                     <div className="flex flex-col gap-1 w-full max-w-[160px]">
-                        <label className="text-xs text-slate-600 font-medium">Name</label>
-                        <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Name" value={newBucket.name} onChange={(e)=>setNewBucket({...newBucket,name:e.target.value})} />
+                      <label className="text-xs text-slate-600 font-medium">Name</label>
+                      <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Name" value={newBucket.name} onChange={(e) => setNewBucket({ ...newBucket, name: e.target.value })} />
                     </div>
                     <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                        <label className="text-xs text-slate-600 font-medium">Amount</label>
-                        <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newBucket.budgeted} onChange={(e)=>setNewBucket({...newBucket,budgeted:e.target.value})} />
+                      <label className="text-xs text-slate-600 font-medium">Amount</label>
+                      <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newBucket.budgeted} onChange={(e) => setNewBucket({ ...newBucket, budgeted: e.target.value })} />
                     </div>
                     <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                        <label className="text-xs text-slate-600 font-medium">Period</label>
-                        <select className="border rounded px-2 py-1 text-sm w-full" value={newBucket.period} onChange={(e)=>setNewBucket({...newBucket,period:e.target.value})}>
-                            <option value="monthly">Monthly</option>
-                            <option value="weekly">Weekly</option>
-                        </select>
+                      <label className="text-xs text-slate-600 font-medium">Period</label>
+                      <select className="border rounded px-2 py-1 text-sm w-full" value={newBucket.period} onChange={(e) => setNewBucket({ ...newBucket, period: e.target.value })}>
+                        <option value="monthly">Monthly</option>
+                        <option value="weekly">Weekly</option>
+                      </select>
                     </div>
-                    <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">Add</button>
-                </form>
+                    <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">
+                      Add
+                    </button>
+                  </form>
                 </div>
-            </section>
+              </section>
             )}
 
-            {activeTab==="income" && (
-            <section>
+            {/* -------------------- INCOME -------------------- */}
+            {activeTab === "income" && (
+              <section>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4 sm:mb-6">
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <h3 className="font-semibold text-slate-800 mb-3">Recurring Income</h3>
+                  <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
+                    <h3 className="font-semibold text-slate-800 mb-3">Income</h3>
                     <div className="space-y-3">
-                    {recurringIncome.map((i)=> {
-                        return (
+                      {recurringIncome
+                        .slice()
+                        .sort((a,b) => (String(nextSingleDueDate(a)) > String(nextSingleDueDate(b)) ? 1 : -1))
+                        .map((i) => (
                         <div key={i.id} className="flex items-center justify-between p-3 rounded border border-slate-100 bg-slate-50">
-                            <div>
-                                <div className="font-medium text-slate-800">{i.name} <span className="text-slate-500 font-normal">· {editIncomeId === i.id ? (
-                                    <>
-                                    <input type="number" className="border rounded px-1 py-0.5 text-xs w-16 mr-1" value={editIncomeAmount} onChange={e=>setEditIncomeAmount(e.target.value)} />
-                                    <button className="text-xs text-indigo-600 font-semibold mr-1" onClick={()=>{
-                                        setRecurringIncome(recurringIncome.map(inc => inc.id === i.id ? { ...inc, amount: round2(parseFloat(editIncomeAmount)) } : inc));
-                                        setEditIncomeId(null);}}>Save</button>
-                                    <button className="text-xs text-slate-400" onClick={()=>setEditIncomeId(null)}>Cancel</button>
-                                    </>
+                          <div>
+                            <div className="font-medium text-slate-800 flex items-center gap-2 flex-wrap">
+                              <span>{i.name}</span>
+                              {isMissingAnchorIncome(i) && <WarnPill text="Missing anchor date" />}
+                              {isMissingDateOnceIncome(i) && <WarnPill text="Missing date" />}
+                              <span className="text-slate-500 font-normal">·{" "}
+                                {editIncomeId === i.id ? (
+                                  <>
+                                    <input type="number" className="border rounded px-1 py-0.5 text-xs w-16 mr-1" value={editIncomeAmount} onChange={(e) => setEditIncomeAmount(e.target.value)} />
+                                    <button
+                                      className="text-xs text-indigo-600 font-semibold mr-1"
+                                      onClick={() => {
+                                        const val = round2(parseFloat(editIncomeAmount));
+                                        if (!Number.isFinite(val) || val < 0) return;
+                                        setRecurringIncome((prev) => prev.map(inc => inc.id === i.id ? { ...inc, amount: val } : inc));
+                                        setEditIncomeId(null);
+                                      }}
+                                    >
+                                      Save
+                                    </button>
+                                    <button className="text-xs text-slate-400" onClick={() => setEditIncomeId(null)}>Cancel</button>
+                                  </>
                                 ) : (
-                                    <span className="cursor-pointer underline decoration-dotted" onClick={()=>{setEditIncomeId(i.id);setEditIncomeAmount(i.amount);}}>{currency(i.amount)}</span>
-                                )}</span></div>
-                                <div className="text-xs text-slate-500">{i.frequency} · Next: <span className="font-medium text-slate-700">{nextSingleDueDate(i)}</span></div>
+                                  <span className="cursor-pointer underline decoration-dotted" onClick={() => { setEditIncomeId(i.id); setEditIncomeAmount(String(i.amount)); }}>
+                                    {currency(i.amount)}
+                                  </span>
+                                )}
+                              </span>
                             </div>
-                            <button onClick={()=>deleteIncome(i.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
+
+                            <div className="text-xs text-slate-500">
+                              {i.frequency === "once"
+                                ? <>one-time · On: <span className="font-medium text-slate-700">{i.nextDate || "—"}</span></>
+                                : <>{i.frequency} · Next: <span className="font-medium text-slate-700">{nextSingleDueDate(i)}</span></>
+                              }
+                            </div>
+
+                            {(i.frequency === "weekly" || i.frequency === "biweekly") && !parseYMDLocal(i.nextDate) && (
+                              <div className="mt-1 text-xs text-amber-800">
+                                Set an anchor date (your actual payday) to keep weekdays accurate.
+                              </div>
+                            )}
+                          </div>
+
+                          <button onClick={() => deleteIncome(i.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
                         </div>
-                        );
-                    })}
+                      ))}
                     </div>
-                </div>
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
+                  </div>
+
+                  <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Add Income</h3>
-                    <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={e => {e.preventDefault();addIncome();}}>
-                        <div className="flex flex-col gap-1 w-full max-w-[160px]">
-                            <label className="text-xs text-slate-600 font-medium">Name</label>
-                            <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Name" value={newIncome.name} onChange={(e)=>setNewIncome({...newIncome,name:e.target.value})} />
-                        </div>
-                        <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                            <label className="text-xs text-slate-600 font-medium">Amount</label>
-                            <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newIncome.amount} onChange={(e)=>setNewIncome({...newIncome,amount:e.target.value})} />
-                        </div>
-                        <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                            <label className="text-xs text-slate-600 font-medium">Frequency</label>
-                            <select className="border rounded px-2 py-1 text-sm w-full" value={newIncome.frequency} onChange={(e)=>setNewIncome({...newIncome,frequency:e.target.value})}>
-                                <option value="monthly">Monthly</option>
-                                <option value="weekly">Weekly</option>
-                                <option value="biweekly">Bi-weekly</option>
-                            </select>
-                        </div>
-                        <div className="flex flex-col gap-1 w-full max-w-[140px]">
-                            <label className="text-xs text-slate-600 font-medium">Next Date</label>
-                            <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newIncome.nextDate} onChange={(e)=>setNewIncome({...newIncome,nextDate:e.target.value})} />
-                        </div>
-                        <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">Add Income</button>
+                    <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={(e) => { e.preventDefault(); addIncome(); }}>
+                      <div className="flex flex-col gap-1 w-full max-w-[160px]">
+                        <label className="text-xs text-slate-600 font-medium">Name</label>
+                        <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Name" value={newIncome.name} onChange={(e) => setNewIncome({ ...newIncome, name: e.target.value })} />
+                      </div>
+                      <div className="flex flex-col gap-1 w-full max-w-[120px]">
+                        <label className="text-xs text-slate-600 font-medium">Amount</label>
+                        <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newIncome.amount} onChange={(e) => setNewIncome({ ...newIncome, amount: e.target.value })} />
+                      </div>
+                      <div className="flex flex-col gap-1 w-full max-w-[130px]">
+                        <label className="text-xs text-slate-600 font-medium">Frequency</label>
+                        <select className="border rounded px-2 py-1 text-sm w-full" value={newIncome.frequency} onChange={(e) => setNewIncome({ ...newIncome, frequency: e.target.value })}>
+                          <option value="monthly">Monthly</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="biweekly">Bi-weekly</option>
+                          <option value="once">One-time</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1 w-full max-w-[150px]">
+                        <label className="text-xs text-slate-600 font-medium">
+                          {newIncome.frequency === "once" ? "Date" : "Anchor / Next Date"}
+                        </label>
+                        <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newIncome.nextDate} onChange={(e) => setNewIncome({ ...newIncome, nextDate: e.target.value })} />
+                      </div>
+                      <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">
+                        Add
+                      </button>
                     </form>
-                    <div className="text-xs text-slate-500 mt-2">Tip: Set a next date to anchor weekly/bi-weekly cycles.</div>
+
+                    {(newIncome.frequency === "weekly" || newIncome.frequency === "biweekly") && !parseYMDLocal(newIncome.nextDate) && (
+                      <div className="mt-2 text-xs text-amber-800">
+                        ⚠️ Set an anchor date (your real payday) so Friday stays Friday.
+                      </div>
+                    )}
+                    {newIncome.frequency === "once" && !parseYMDLocal(newIncome.nextDate) && (
+                      <div className="mt-2 text-xs text-amber-800">
+                        ⚠️ One-time income needs a date to show up in weekly cashflow and monthly totals.
+                      </div>
+                    )}
+
+                    <div className="text-xs text-slate-500 mt-2">
+                      Weekly/bi-weekly: set the anchor to your payday. One-time: pick the exact date.
+                    </div>
+                  </div>
                 </div>
-                </div>
-            </section>
+              </section>
             )}
 
-            {activeTab==="bills" && (
-            <section>
+            {/* -------------------- BILLS -------------------- */}
+            {activeTab === "bills" && (
+              <section>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4 sm:mb-6">
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <h3 className="font-semibold text-slate-800 mb-3">Recurring Bills</h3>
+                  <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
+                    <h3 className="font-semibold text-slate-800 mb-3">Bills</h3>
+
                     <div className="space-y-3">
-                    {recurringBills.map((b)=> {
-                        return (
-                        <div key={b.id} className="flex items-center justify-between p-3 rounded border border-slate-100 bg-slate-50">
+                      {recurringBills
+                        .slice()
+                        .sort((a, b) => (String(nextSingleDueDate(a)) > String(nextSingleDueDate(b)) ? 1 : -1))
+                        .map((b) => (
+                          <div key={b.id} className="flex items-center justify-between p-3 rounded border border-slate-100 bg-slate-50">
                             <div>
-                                <div className="font-medium text-slate-800">{b.name} <span className="text-slate-500 font-normal">· {editBillId === b.id ? (
+                              <div className="font-medium text-slate-800 flex items-center gap-2 flex-wrap">
+                                <span>{b.name}</span>
+                                {isMissingAnchorBill(b) && <WarnPill text="Missing anchor date" />}
+                                <span className="text-slate-500 font-normal">·{" "}
+                                  {editBillId === b.id ? (
                                     <>
-                                    <input type="number" className="border rounded px-1 py-0.5 text-xs w-16 mr-1" value={editBillAmount} onChange={e=>setEditBillAmount(e.target.value)} />
-                                    <button className="text-xs text-indigo-600 font-semibold mr-1" onClick={()=>{
-                                        setRecurringBills(recurringBills.map(bill => bill.id === b.id ? { ...bill, amount: round2(parseFloat(editBillAmount)) } : bill));
-                                        setEditBillId(null);}}>Save</button>
-                                    <button className="text-xs text-slate-400" onClick={()=>setEditBillId(null)}>Cancel</button>
+                                      <input type="number" className="border rounded px-1 py-0.5 text-xs w-16 mr-1" value={editBillAmount} onChange={(e) => setEditBillAmount(e.target.value)} />
+                                      <button
+                                        className="text-xs text-indigo-600 font-semibold mr-1"
+                                        onClick={() => {
+                                          const val = round2(parseFloat(editBillAmount));
+                                          if (!Number.isFinite(val) || val < 0) return;
+                                          setRecurringBills((prev) => prev.map(bb => bb.id === b.id ? { ...bb, amount: val } : bb));
+                                          setEditBillId(null);
+                                        }}
+                                      >
+                                        Save
+                                      </button>
+                                      <button className="text-xs text-slate-400" onClick={() => setEditBillId(null)}>Cancel</button>
                                     </>
-                                ) : (
-                                    <span className="cursor-pointer underline decoration-dotted" onClick={()=>{setEditBillId(b.id);setEditBillAmount(b.amount);}}>{currency(b.amount)}</span>
-                                )}</span></div>
-                                <div className="text-xs text-slate-500">{b.frequency} · Next: <span className="font-medium text-slate-700">{nextSingleDueDate(b)}</span></div>
+                                  ) : (
+                                    <span className="cursor-pointer underline decoration-dotted" onClick={() => { setEditBillId(b.id); setEditBillAmount(String(b.amount)); }}>
+                                      {currency(b.amount)}
+                                    </span>
+                                  )}
+                                </span>
+                              </div>
+
+                              <div className="text-xs text-slate-500">
+                                {b.frequency} · Next: <span className="font-medium text-slate-700">{nextSingleDueDate(b)}</span>
+                              </div>
+
+                              {b.frequency === "weekly" && !parseYMDLocal(b.nextDate) && (
+                                <div className="mt-1 text-xs text-amber-800">
+                                  Set an anchor date for correct weekly scheduling.
+                                </div>
+                              )}
                             </div>
-                            <button onClick={()=>deleteBill(b.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
-                        </div>
-                        );
-                    })}
+
+                            <button onClick={() => deleteBill(b.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
+                          </div>
+                        ))}
                     </div>
-                </div>
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
+                  </div>
+
+                  <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Add Bill</h3>
-                    <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={e => {e.preventDefault();addBill();}}>
-                        <div className="flex flex-col gap-1 w-full max-w-[160px]">
-                            <label className="text-xs text-slate-600 font-medium">Name</label>
-                            <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Name" value={newBill.name} onChange={(e)=>setNewBill({...newBill,name:e.target.value})} />
-                        </div>
-                        <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                            <label className="text-xs text-slate-600 font-medium">Amount</label>
-                            <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newBill.amount} onChange={(e)=>setNewBill({...newBill,amount:e.target.value})} />
-                        </div>
-                        <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                            <label className="text-xs text-slate-600 font-medium">Frequency</label>
-                            <select className="border rounded px-2 py-1 text-sm w-full" value={newBill.frequency} onChange={(e)=>setNewBill({...newBill,frequency:e.target.value})}>
-                                <option value="monthly">Monthly</option>
-                                <option value="weekly">Weekly</option>
-                                <option value="yearly">Yearly</option>
-                            </select>
-                        </div>
-                        {newBill.frequency === 'monthly' && (
-                            <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                                <label className="text-xs text-slate-600 font-medium">Due day (1-28)</label>
-                                <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Due day (1-28)" value={newBill.dueDay} onChange={(e)=>setNewBill({...newBill,dueDay:e.target.value})} />
-                            </div>
-                        )}
-                        {newBill.frequency === 'weekly' && (
-                            <div className="flex flex-col gap-1 w-full max-w-[140px]">
-                                <label className="text-xs text-slate-600 font-medium">Anchor Date</label>
-                                <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newBill.nextDate} onChange={(e)=>setNewBill({...newBill,nextDate:e.target.value})} />
-                            </div>
-                        )}
-                        {newBill.frequency === 'yearly' && (
-                            <>
-                            <div className="flex flex-col gap-1 w-full max-w-[100px]">
-                                <label className="text-xs text-slate-600 font-medium">Due month (1-12)</label>
-                                <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Due month (1-12)" value={newBill.dueMonth} onChange={(e)=>setNewBill({...newBill,dueMonth:e.target.value})} />
-                            </div>
-                            <div className="flex flex-col gap-1 w-full max-w-[100px]">
-                                <label className="text-xs text-slate-600 font-medium">Due day (1-28)</label>
-                                <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Due day (1-28)" value={newBill.dueDay} onChange={(e)=>setNewBill({...newBill,dueDay:e.target.value})} />
-                            </div>
-                            </>
-                        )}
-                        <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">Add Bill</button>
-                    </form>
-                    <div className="text-xs text-slate-500 mt-2">Monthly bills: choose a due day (1–28). Weekly bills: set an anchor date.</div>
-                </div>
-                </div>
-            </section>
-            )}
 
-            {activeTab==="transactions" && (
-            <section>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <h3 className="font-semibold text-slate-800 mb-3">Transactions</h3>
-                    <div className="space-y-3">
-                    {transactions.map((t)=> {
-                        return (
-                        <div key={t.id} className="flex items-center justify-between p-3 rounded border border-slate-100 bg-slate-50">
-                            <div>
-                                <div className="font-medium text-slate-800">{t.description} <span className="text-slate-500 font-normal">· {editTransactionId === t.id ? (
-                                    <>
-                                    <input type="number" className="border rounded px-1 py-0.5 text-xs w-16 mr-1" value={editTransactionAmount} onChange={e=>setEditTransactionAmount(e.target.value)} />
-                                    <button className="text-xs text-indigo-600 font-semibold mr-1" onClick={()=>{
-                                        setTransactions(transactions.map(tx => tx.id === t.id ? { ...tx, amount: round2(parseFloat(editTransactionAmount)) } : tx));
-                                        setEditTransactionId(null);}}>Save</button>
-                                    <button className="text-xs text-slate-400" onClick={()=>setEditTransactionId(null)}>Cancel</button>
-                                    </>
-                                ) : (
-                                    <span className="cursor-pointer underline decoration-dotted" onClick={()=>{setEditTransactionId(t.id);setEditTransactionAmount(t.amount);}}>{currency(t.amount)}</span>
-                                )}</span></div>
-                                <div className="text-xs text-slate-500">{t.date} · {buckets.find(b=>b.id===t.bucketId)?.name}</div>
-                            </div>
-                            <button onClick={()=>deleteTransaction(t.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
+                    <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={(e) => { e.preventDefault(); addBill(); }}>
+                      <div className="flex flex-col gap-1 w-full max-w-[160px]">
+                        <label className="text-xs text-slate-600 font-medium">Name</label>
+                        <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Name" value={newBill.name} onChange={(e) => setNewBill({ ...newBill, name: e.target.value })} />
+                      </div>
+
+                      <div className="flex flex-col gap-1 w-full max-w-[120px]">
+                        <label className="text-xs text-slate-600 font-medium">Amount</label>
+                        <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newBill.amount} onChange={(e) => setNewBill({ ...newBill, amount: e.target.value })} />
+                      </div>
+
+                      <div className="flex flex-col gap-1 w-full max-w-[120px]">
+                        <label className="text-xs text-slate-600 font-medium">Frequency</label>
+                        <select className="border rounded px-2 py-1 text-sm w-full" value={newBill.frequency} onChange={(e) => setNewBill({ ...newBill, frequency: e.target.value })}>
+                          <option value="monthly">Monthly</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="yearly">Yearly</option>
+                        </select>
+                      </div>
+
+                      {newBill.frequency === "monthly" && (
+                        <div className="flex flex-col gap-1 w-full max-w-[120px]">
+                          <label className="text-xs text-slate-600 font-medium">Due day (1-28)</label>
+                          <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newBill.dueDay} onChange={(e) => setNewBill({ ...newBill, dueDay: e.target.value })} />
                         </div>
-                        );
-                    })}
+                      )}
+
+                      {newBill.frequency === "weekly" && (
+                        <div className="flex flex-col gap-1 w-full max-w-[150px]">
+                          <label className="text-xs text-slate-600 font-medium">Anchor Date</label>
+                          <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newBill.nextDate} onChange={(e) => setNewBill({ ...newBill, nextDate: e.target.value })} />
+                        </div>
+                      )}
+
+                      {newBill.frequency === "yearly" && (
+                        <>
+                          <div className="flex flex-col gap-1 w-full max-w-[110px]">
+                            <label className="text-xs text-slate-600 font-medium">Due month (1-12)</label>
+                            <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newBill.dueMonth} onChange={(e) => setNewBill({ ...newBill, dueMonth: e.target.value })} />
+                          </div>
+                          <div className="flex flex-col gap-1 w-full max-w-[110px]">
+                            <label className="text-xs text-slate-600 font-medium">Due day (1-28)</label>
+                            <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newBill.dueDay} onChange={(e) => setNewBill({ ...newBill, dueDay: e.target.value })} />
+                          </div>
+                        </>
+                      )}
+
+                      <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">
+                        Add
+                      </button>
+                    </form>
+
+                    {newBill.frequency === "weekly" && !parseYMDLocal(newBill.nextDate) && (
+                      <div className="mt-2 text-xs text-amber-800">
+                        ⚠️ Weekly bills need an anchor date to schedule correctly.
+                      </div>
+                    )}
+
+                    <div className="text-xs text-slate-500 mt-2">
+                      Monthly: due day. Weekly: anchor date. Yearly: month + day.
                     </div>
+                  </div>
                 </div>
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <h3 className="font-semibold text-slate-800 mb-3">Add Transaction</h3>
-                    <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={e => {e.preventDefault();addTransaction();}}>
-                        <div className="flex flex-col gap-1 w-full max-w-[140px]">
-                            <label className="text-xs text-slate-600 font-medium">Bucket</label>
-                            <select className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.bucketId} onChange={(e)=>setNewTransaction({...newTransaction,bucketId:e.target.value})}>
-                                <option value="">Select Bucket</option>
-                                {buckets.map(b=> <option key={b.id} value={b.id}>{b.name}</option>)}
-                            </select>
-                        </div>
-                        <div className="flex flex-col gap-1 w-full max-w-[100px]">
-                            <label className="text-xs text-slate-600 font-medium">Amount</label>
-                            <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newTransaction.amount} onChange={(e)=>setNewTransaction({...newTransaction,amount:e.target.value})} />
-                        </div>
-                        <div className="flex flex-col gap-1 w-full max-w-[140px]">
-                            <label className="text-xs text-slate-600 font-medium">Description</label>
-                            <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Description" value={newTransaction.description} onChange={(e)=>setNewTransaction({...newTransaction,description:e.target.value})} />
-                        </div>
-                        <div className="flex flex-col gap-1 w-full max-w-[140px]">
-                            <label className="text-xs text-slate-600 font-medium">Date</label>
-                            <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.date} onChange={(e)=>setNewTransaction({...newTransaction,date:e.target.value})} />
-                        </div>
-                        <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">Add</button>
-                    </form>
-                </div>
-                </div>
-            </section>
+              </section>
             )}
 
-            </div>
+            {/* -------------------- TRANSACTIONS -------------------- */}
+            {activeTab === "transactions" && (
+              <section>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+                  <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
+                    <h3 className="font-semibold text-slate-800 mb-3">Transactions</h3>
+
+                    <div className="space-y-3">
+                      {transactions
+                        .slice()
+                        .sort((a, b) => (a.date < b.date ? 1 : -1))
+                        .map((t) => {
+                          const bucketName = buckets.find(b => b.id === t.bucketId)?.name || "Unknown";
+                          return (
+                            <div key={t.id} className="flex items-center justify-between p-3 rounded border border-slate-100 bg-slate-50">
+                              <div>
+                                <div className="font-medium text-slate-800">
+                                  {t.description}{" "}
+                                  <span className="text-slate-500 font-normal">·{" "}
+                                    {editTransactionId === t.id ? (
+                                      <>
+                                        <input
+                                          type="number"
+                                          className="border rounded px-1 py-0.5 text-xs w-16 mr-1"
+                                          value={editTransactionAmount}
+                                          onChange={(e) => setEditTransactionAmount(e.target.value)}
+                                        />
+                                        <button
+                                          className="text-xs text-indigo-600 font-semibold mr-1"
+                                          onClick={() => {
+                                            const val = round2(parseFloat(editTransactionAmount));
+                                            if (!Number.isFinite(val) || val < 0) return;
+                                            setTransactions((prev) => prev.map(tx => tx.id === t.id ? { ...tx, amount: val } : tx));
+                                            setEditTransactionId(null);
+                                          }}
+                                        >
+                                          Save
+                                        </button>
+                                        <button className="text-xs text-slate-400" onClick={() => setEditTransactionId(null)}>Cancel</button>
+                                      </>
+                                    ) : (
+                                      <span className="cursor-pointer underline decoration-dotted" onClick={() => { setEditTransactionId(t.id); setEditTransactionAmount(String(t.amount)); }}>
+                                        {currency(t.amount)}
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-slate-500">{t.date} · {bucketName}</div>
+                              </div>
+
+                              <button onClick={() => deleteTransaction(t.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
+                    <h3 className="font-semibold text-slate-800 mb-3">Add Transaction</h3>
+
+                    <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={(e) => { e.preventDefault(); addTransaction(); }}>
+                      <div className="flex flex-col gap-1 w-full max-w-[160px]">
+                        <label className="text-xs text-slate-600 font-medium">Bucket</label>
+                        <select className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.bucketId} onChange={(e) => setNewTransaction({ ...newTransaction, bucketId: e.target.value })}>
+                          <option value="">Select Bucket</option>
+                          {buckets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="flex flex-col gap-1 w-full max-w-[110px]">
+                        <label className="text-xs text-slate-600 font-medium">Amount</label>
+                        <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.amount} onChange={(e) => setNewTransaction({ ...newTransaction, amount: e.target.value })} />
+                      </div>
+
+                      <div className="flex flex-col gap-1 w-full max-w-[220px]">
+                        <label className="text-xs text-slate-600 font-medium">Description</label>
+                        <input className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.description} onChange={(e) => setNewTransaction({ ...newTransaction, description: e.target.value })} />
+                      </div>
+
+                      <div className="flex flex-col gap-1 w-full max-w-[150px]">
+                        <label className="text-xs text-slate-600 font-medium">Date</label>
+                        <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.date} onChange={(e) => setNewTransaction({ ...newTransaction, date: e.target.value })} />
+                      </div>
+
+                      <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">
+                        Add
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </section>
+            )}
+
+          </div>
         </div>
-    );
+      );
     }
 
-    ReactDOM.render(<App />, document.getElementById('root'));
+    ReactDOM.render(<App />, document.getElementById("root"));
   </script>
 </body>
 </html>
+
