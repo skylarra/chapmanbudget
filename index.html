@@ -28,7 +28,7 @@
         return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
       };
 
-      // Parse YYYY-MM-DD -> local midnight Date (prevents UTC drift + weekday shifts)
+      // Parse YYYY-MM-DD -> local midnight Date (prevents UTC drift/weekday shifts)
       const parseYMDLocal = (ymd) => {
         if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
         const [y, m, d] = ymd.split("-").map(Number);
@@ -67,7 +67,6 @@
         loadState("recurringIncome", [
           { id: 1, name: "Salary", amount: 3000, frequency: "monthly", nextDate: "2025-10-01" },
           { id: 2, name: "Side Hustle", amount: 500, frequency: "weekly", nextDate: "2025-10-03" },
-          // { id: 3, name: "Bonus", amount: 1200, frequency: "once", nextDate: "2025-10-12" },
         ])
       );
 
@@ -133,7 +132,6 @@
 
       // ---------------- Calendar ----------------
       const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
-      const weeksInMonth = daysInMonth / 7;
       const monthKey = `${selectedYear}-${pad2(selectedMonth + 1)}`;
       const monthStart = new Date(selectedYear, selectedMonth, 1, 0, 0, 0, 0);
       const monthEnd = new Date(selectedYear, selectedMonth, daysInMonth, 23, 59, 59, 999);
@@ -175,36 +173,14 @@
         return item.nextDate || fmtDate(today0);
       };
 
-      // ---------------- Monthly math (calendar-aware) ----------------
-      const monthlyFromBudget = (b) => (b.period === "weekly" ? round2(b.budgeted * weeksInMonth) : round2(b.budgeted));
-
-      const monthlyFromIncome = (i) => {
-        if (i.frequency === "weekly") return round2(i.amount * weeksInMonth);
-        if (i.frequency === "biweekly") return round2(i.amount * Math.floor(daysInMonth / 14));
-        if (i.frequency === "once") {
-          const d = parseYMDLocal(i.nextDate);
-          if (!d) return 0;
-          return (d >= monthStart && d <= monthEnd) ? round2(i.amount) : 0;
-        }
-        return round2(i.amount); // monthly
-      };
-
-      const monthlyFromBill = (b) => {
-        if (b.frequency === "weekly") return round2(b.amount * weeksInMonth);
-        if (b.frequency === "yearly") return round2(b.amount / 12);
-        return round2(b.amount); // monthly
-      };
-
-      const totalMonthlyIncome = recurringIncome.reduce((s, i) => s + monthlyFromIncome(i), 0);
-      const totalMonthlyBills = recurringBills.reduce((s, b) => s + monthlyFromBill(b), 0);
-      const totalMonthlyBudgeted = buckets.reduce((s, b) => s + monthlyFromBudget(b), 0);
-
       // ---------------- Custom week start (based on biggest repeating income’s next weekday) ----------------
-      const incomeMonthlyValue = (i) => {
-        if (i.frequency === "weekly") return i.amount * weeksInMonth;
-        if (i.frequency === "biweekly") return i.amount * Math.floor(daysInMonth / 14);
-        if (i.frequency === "monthly") return i.amount;
-        return 0; // ignore one-time for anchor
+      const incomeMonthlyValueLegacy = (i) => {
+        // Only used to pick a week-start anchor. Totals use month-accurate counting elsewhere.
+        const amt = Number(i.amount) || 0;
+        if (i.frequency === "weekly") return amt * 4;
+        if (i.frequency === "biweekly") return amt * 2;
+        if (i.frequency === "monthly") return amt;
+        return 0;
       };
 
       let weekStartDay = 1; // Monday default
@@ -213,9 +189,9 @@
       const repeatingIncomes = recurringIncome.filter(i => i.frequency !== "once");
       if (repeatingIncomes.length) {
         let maxIncome = repeatingIncomes[0];
-        let maxValue = incomeMonthlyValue(maxIncome);
+        let maxValue = incomeMonthlyValueLegacy(maxIncome);
         for (let i = 1; i < repeatingIncomes.length; i++) {
-          const val = incomeMonthlyValue(repeatingIncomes[i]);
+          const val = incomeMonthlyValueLegacy(repeatingIncomes[i]);
           if (val > maxValue) { maxIncome = repeatingIncomes[i]; maxValue = val; }
         }
         const nextDue = parseYMDLocal(nextSingleDueDate(maxIncome)) || new Date();
@@ -238,6 +214,23 @@
         end.setDate(start.getDate() + 6);
         end.setHours(23, 59, 59, 999);
         return end;
+      };
+
+      // Count how many custom weeks exist in the selected month (for bucket month-estimates)
+      const countCustomWeeksInMonth = () => {
+        const start = new Date(monthStart); start.setHours(0,0,0,0);
+        const end = new Date(monthEnd); end.setHours(23,59,59,999);
+
+        let first = getLastCustomWeekStart(start);
+        let count = 0;
+
+        while (first <= end) {
+          if (first >= start && first <= end) count++;
+          first = new Date(first);
+          first.setDate(first.getDate() + 7);
+          first.setHours(0,0,0,0);
+        }
+        return Math.max(1, count || 4);
       };
 
       const now = new Date();
@@ -267,8 +260,104 @@
       });
 
       const totalMonthlySpent = bucketsWithSpent.reduce((s, b) => s + (Number(b.spent) || 0), 0);
+
+      // ---------------- Occurrence counting (month-accurate paydays) ----------------
+      const isInRange = (d, start, end) => d >= start && d <= end;
+
+      const countOccurrencesInSelectedMonth = (item) => {
+        const start = new Date(monthStart); start.setHours(0,0,0,0);
+        const end = new Date(monthEnd); end.setHours(23,59,59,999);
+
+        if (item.frequency === "weekly" || item.frequency === "biweekly") {
+          const step = item.frequency === "weekly" ? 7 : 14;
+          const anchor = parseYMDLocal(item.nextDate);
+          if (!anchor) return 0;
+
+          let d = new Date(anchor); d.setHours(0,0,0,0);
+          while (d < start) d.setDate(d.getDate() + step);
+
+          let count = 0;
+          while (d <= end) {
+            count++;
+            d.setDate(d.getDate() + step);
+          }
+          return count;
+        }
+
+        if (item.frequency === "monthly") return 1;
+
+        if (item.frequency === "once") {
+          const d = parseYMDLocal(item.nextDate);
+          return d && isInRange(d, start, end) ? 1 : 0;
+        }
+
+        return 0;
+      };
+
+      // ---------------- Monthly math (UPDATED: uses actual occurrences in month) ----------------
+      const monthlyFromBudget = (b) => {
+        const w = countCustomWeeksInMonth();
+        return b.period === "weekly" ? round2((b.budgeted || 0) * w) : round2(b.budgeted || 0);
+      };
+
+      const monthlyFromIncome = (i) => {
+        if (i.frequency === "weekly" || i.frequency === "biweekly") {
+          const count = countOccurrencesInSelectedMonth(i);
+          return round2((i.amount || 0) * count);
+        }
+        if (i.frequency === "once") {
+          return countOccurrencesInSelectedMonth(i) ? round2(i.amount || 0) : 0;
+        }
+        return round2(i.amount || 0); // monthly
+      };
+
+      const monthlyFromBill = (b) => {
+        if (b.frequency === "weekly") {
+          // expects b.nextDate anchor
+          const count = countOccurrencesInSelectedMonth({ ...b, frequency: "weekly" });
+          return round2((b.amount || 0) * count);
+        }
+        if (b.frequency === "yearly") return round2((b.amount || 0) / 12); // estimate for monthly totals
+        return round2(b.amount || 0); // monthly
+      };
+
+      const totalMonthlyIncome = recurringIncome.reduce((s, i) => s + monthlyFromIncome(i), 0);
+      const totalMonthlyBills = recurringBills.reduce((s, b) => s + monthlyFromBill(b), 0);
+      const totalMonthlyBudgeted = buckets.reduce((s, b) => s + monthlyFromBudget(b), 0);
+
       const monthlyRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlySpent);
       const projectedRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlyBudgeted);
+
+      // ---------------- Main paycheck + paydays count (for bills set-aside per paycheck) ----------------
+      const getMainPaycheck = () => {
+        const repeating = recurringIncome.filter(i => i.frequency !== "once");
+        if (!repeating.length) return null;
+
+        const score = (i) => {
+          const amt = Number(i.amount) || 0;
+          if (i.frequency === "weekly" || i.frequency === "biweekly") return monthlyFromIncome(i); // month-accurate
+          if (i.frequency === "monthly") return amt;
+          return 0;
+        };
+
+        return repeating.reduce((best, cur) => (score(cur) > score(best) ? cur : best), repeating[0]);
+      };
+
+      const countPaydaysInSelectedMonth = () => {
+        const main = getMainPaycheck();
+        if (!main) return 0;
+
+        if (main.frequency === "weekly" || main.frequency === "biweekly") {
+          return countOccurrencesInSelectedMonth(main);
+        }
+        if (main.frequency === "monthly") return 1;
+        return 0;
+      };
+
+      const mainPaycheck = getMainPaycheck();
+      const paydaysThisMonthRaw = countPaydaysInSelectedMonth();
+      const usedFallbackPaydays = paydaysThisMonthRaw <= 0;
+      const paydaysThisMonth = usedFallbackPaydays ? 4 : paydaysThisMonthRaw;
 
       // ---------------- Weekly cashflow: this + next ----------------
       const addDays = (d, n) => {
@@ -300,7 +389,7 @@
 
         if (item.frequency === "weekly" || item.frequency === "biweekly") {
           const step = item.frequency === "weekly" ? 7 : 14;
-          const anchor = parseYMDLocal(item.nextDate) || floorLocalToday(); // warns if missing
+          const anchor = parseYMDLocal(item.nextDate) || floorLocalToday();
           let d = new Date(anchor); d.setHours(0,0,0,0);
           while (d < start) d = addDays(d, step);
           while (d <= end) {
@@ -377,6 +466,15 @@
       const thisWeekTotals = totalsForEvents(thisWeekEvents);
       const nextWeekTotals = totalsForEvents(nextWeekEvents);
 
+      // ---------------- Bills due this month + set-aside per paycheck ----------------
+      const monthBills = [];
+      recurringBills.forEach(b => monthBills.push(...listOccurrencesInRange(b, "bill", monthStart, monthEnd)));
+      const totalBillsDueThisMonth = round2(monthBills.reduce((s, x) => s + (x.amount || 0), 0));
+
+      const perPaycheckSetAsideForBills = round2(
+        totalBillsDueThisMonth / Math.max(1, paydaysThisMonth)
+      );
+
       // ---------------- Warnings ----------------
       const isMissingAnchorIncome = (i) => (i.frequency === "weekly" || i.frequency === "biweekly") && !parseYMDLocal(i.nextDate);
       const isMissingAnchorBill = (b) => (b.frequency === "weekly") && !parseYMDLocal(b.nextDate);
@@ -397,11 +495,6 @@
         if (pct >= 100) return "bg-red-500";
         if (pct >= 80) return "bg-yellow-500";
         return "bg-green-500";
-      };
-
-      const badge = (kind) => {
-        if (kind === "income") return "bg-emerald-100 text-emerald-700 border-emerald-200";
-        return "bg-rose-100 text-rose-700 border-rose-200";
       };
 
       const WarnPill = ({ text }) => (
@@ -484,7 +577,7 @@
 
       const addIncome = () => {
         if (!newIncome.name || !newIncome.amount) return;
-        if (newIncome.frequency === "once" && !parseYMDLocal(newIncome.nextDate)) return; // one-time must have date
+        if (newIncome.frequency === "once" && !parseYMDLocal(newIncome.nextDate)) return;
 
         setRecurringIncome((prev) => [
           ...prev,
@@ -527,27 +620,13 @@
 
       const deleteBill = (id) => setRecurringBills((prev) => prev.filter((b) => b.id !== id));
 
-      // ---------------- Inline edit state ----------------
-      const [editBucketId, setEditBucketId] = React.useState(null);
-      const [editBucketAmount, setEditBucketAmount] = React.useState("");
-
-      const [editIncomeId, setEditIncomeId] = React.useState(null);
-      const [editIncomeAmount, setEditIncomeAmount] = React.useState("");
-
-      const [editBillId, setEditBillId] = React.useState(null);
-      const [editBillAmount, setEditBillAmount] = React.useState("");
-
-      const [editTransactionId, setEditTransactionId] = React.useState(null);
-      const [editTransactionAmount, setEditTransactionAmount] = React.useState("");
-
-      // ---------------- Download summary (round-trip importable) ----------------
+      // ---------------- Download / Upload summary (round-trip importable) ----------------
       const JSON_START = "---BEGIN_BUDGET_BUCKETS_JSON---";
       const JSON_END = "---END_BUDGET_BUCKETS_JSON---";
 
       const downloadMonthlySummary = () => {
         const label = new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
-        // Monthly tx slice (for display)
         const monthTransactions = transactions.filter(t => {
           const d = parseYMDLocal(t.date);
           return d && d >= monthStart && d <= monthEnd;
@@ -562,23 +641,22 @@
         txt += `------------------------------------------------------------\n\n`;
 
         txt += `✅ OVERVIEW\n`;
-        txt += `Income (monthly est.): ${currency(totalMonthlyIncome)}\n`;
+        txt += `Income (this month): ${currency(totalMonthlyIncome)}\n`;
         txt += `Bills  (monthly est.): -${currency(totalMonthlyBills).slice(1)}\n`;
         txt += `Spent (this month/week): -${currency(totalMonthlySpent).slice(1)}\n`;
         txt += `Remaining now: ${currency(monthlyRemaining)}\n`;
         txt += `If all budgets spent: ${currency(projectedRemaining)}\n\n`;
 
+        txt += `💳 BILL FUNDING\n`;
+        txt += `Bills due this month: ${currency(totalBillsDueThisMonth)}\n`;
+        txt += `Set aside per paycheck (${paydaysThisMonth} paychecks): ${currency(perPaycheckSetAsideForBills)}\n`;
+        if (usedFallbackPaydays) txt += `NOTE: Paychecks counted could not be determined; used 4-paycheck estimate.\n`;
+        if (mainPaycheck) txt += `Main paycheck: ${mainPaycheck.name} (${mainPaycheck.frequency}, Next: ${nextSingleDueDate(mainPaycheck)})\n`;
+        txt += `\n`;
+
         txt += `🗓 WEEKLY CASHFLOW\n`;
         txt += `This week (${fmtDate(thisWeekStart)} → ${fmtDate(thisWeekEnd)}): Income ${currency(thisWeekTotals.income)}, Bills -${currency(thisWeekTotals.bills).slice(1)}, Leftover ${currency(thisWeekTotals.leftover)}\n`;
         txt += `Next week (${fmtDate(nextWeekStart)} → ${fmtDate(nextWeekEnd)}): Income ${currency(nextWeekTotals.income)}, Bills -${currency(nextWeekTotals.bills).slice(1)}, Leftover ${currency(nextWeekTotals.leftover)}\n\n`;
-
-        if (hasAnyAnchorWarnings) {
-          txt += `⚠️ WARNINGS\n`;
-          if (missingIncomeAnchors.length) txt += `- Weekly/biweekly incomes missing anchor date: ${missingIncomeAnchors.map(x => x.name).join(", ")}\n`;
-          if (missingBillAnchors.length) txt += `- Weekly bills missing anchor date: ${missingBillAnchors.map(x => x.name).join(", ")}\n`;
-          if (missingOnceDates.length) txt += `- One-time incomes missing date: ${missingOnceDates.map(x => x.name).join(", ")}\n`;
-          txt += `\n`;
-        }
 
         txt += `🧾 TRANSACTIONS (this month)\n`;
         txt += `Count: ${monthTxCount}  Total: ${currency(monthTxTotal)}\n`;
@@ -589,13 +667,6 @@
         if (monthTransactions.length > 30) txt += `... (${monthTransactions.length - 30} more)\n`;
         txt += `\n`;
 
-        txt += `💸 BUCKETS\n`;
-        bucketsWithSpent.forEach(b => {
-          const remaining = round2((b.budgeted || 0) - (b.spent || 0));
-          txt += `- ${b.name} (${b.period})  Budget: ${currency(b.budgeted)}  Spent: ${currency(b.spent)}  Remaining: ${currency(remaining)}\n`;
-        });
-
-        // Machine-readable payload for upload round-trip
         const payload = {
           version: 1,
           exportedAt: new Date().toISOString(),
@@ -604,7 +675,7 @@
           buckets,
           recurringIncome,
           recurringBills,
-          transactions, // include ALL transactions
+          transactions,
         };
 
         txt += `\n${JSON_START}\n`;
@@ -622,7 +693,6 @@
         URL.revokeObjectURL(url);
       };
 
-      // ---------------- Upload summary (imports downloaded .txt) ----------------
       const txKey = (t) =>
         `${t.bucketId}|${t.date}|${round2(t.amount).toFixed(2)}|${String(t.description || "").trim()}`;
 
@@ -650,14 +720,12 @@
               throw new Error("Missing required arrays");
             }
 
-            // Apply core state
             setSelectedYear(Number.isFinite(payload.selectedYear) ? payload.selectedYear : selectedYear);
             setSelectedMonth(Number.isFinite(payload.selectedMonth) ? payload.selectedMonth : selectedMonth);
             setBuckets(payload.buckets);
             setRecurringIncome(payload.recurringIncome);
             setRecurringBills(payload.recurringBills);
 
-            // Merge transactions (do not delete existing)
             if (Array.isArray(payload.transactions)) {
               setTransactions((prev) => {
                 const seen = new Set(prev.map(txKey));
@@ -682,7 +750,7 @@
         reader.readAsText(file);
       };
 
-      // ---------------- Summary page numbers ----------------
+      // ---------------- Summary helper ----------------
       const monthTransactions = transactions
         .filter(t => {
           const d = parseYMDLocal(t.date);
@@ -694,6 +762,13 @@
       const monthTxTotal = round2(monthTransactions.reduce((s, t) => s + (Number(t.amount) || 0), 0));
       const monthTxCount = monthTransactions.length;
 
+      // ---------------- UI helpers ----------------
+      const Pill = ({ children, className="" }) => (
+        <span className={`inline-flex items-center text-xs px-2 py-0.5 rounded-full border ${className}`}>
+          {children}
+        </span>
+      );
+
       // ---------------- Render ----------------
       return (
         <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-sky-50 to-emerald-50">
@@ -703,17 +778,40 @@
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
                   <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800">💰 Budget Buckets</h1>
-                  <div className="text-sm text-slate-600 mt-1">
-                    Month: <span className="font-semibold text-slate-800">
-                      {new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+
+                  <div className="text-sm text-slate-600 mt-1 flex flex-wrap items-center gap-2">
+                    <span>
+                      Month: <span className="font-semibold text-slate-800">
+                        {new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+                      </span>
                     </span>
-                    <span className="mx-2 text-slate-300">•</span>
-                    Weekly start: <span className="font-semibold text-slate-800">{weekStartLabel}</span>
+                    <span className="text-slate-300">•</span>
+                    <span>
+                      Weekly start: <span className="font-semibold text-slate-800">{weekStartLabel}</span>
+                    </span>
+                    <span className="text-slate-300">•</span>
+                    <span>
+                      Paychecks counted: <span className="font-semibold text-slate-800">{paydaysThisMonth}</span>
+                    </span>
+
+                    {usedFallbackPaydays && (
+                      <Pill className="bg-amber-50 text-amber-800 border-amber-200">
+                        ⚠️ Using 4-paycheck estimate
+                      </Pill>
+                    )}
                   </div>
+
+                  {mainPaycheck && (
+                    <div className="text-xs text-slate-500 mt-1">
+                      Main paycheck: <span className="font-semibold text-slate-700">{mainPaycheck.name}</span>
+                      {" "}({mainPaycheck.frequency}{mainPaycheck.frequency !== "monthly" ? ", anchor " + (mainPaycheck.nextDate || "—") : ""})
+                      {" "}· Next: <span className="font-semibold text-slate-700">{nextSingleDueDate(mainPaycheck)}</span>
+                    </div>
+                  )}
 
                   {hasAnyAnchorWarnings && (
                     <div className="mt-3 p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-900">
-                      <div className="font-semibold text-sm">⚠️ Setup warnings (fix these for accurate weekly cashflow)</div>
+                      <div className="font-semibold text-sm">⚠️ Setup warnings (fix these for accurate scheduling)</div>
                       <ul className="mt-1 text-sm list-disc ml-5">
                         {missingIncomeAnchors.length > 0 && (
                           <li>Weekly/biweekly income missing anchor date: <span className="font-semibold">{missingIncomeAnchors.map(x => x.name).join(", ")}</span></li>
@@ -782,14 +880,33 @@
             {activeTab === "summary" && (
               <section className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                  <StatCard label="Income (monthly est.)" value={currency(totalMonthlyIncome)} sub="One-time income counts only if dated in this month" tone="emerald" />
-                  <StatCard label="Bills (monthly est.)" value={`-${currency(totalMonthlyBills).slice(1)}`} sub="Calendar-aware estimate" tone="rose" />
-                  <StatCard label="Spent (this month/week)" value={`-${currency(totalMonthlySpent).slice(1)}`} sub="Monthly buckets = month • Weekly = this week" tone="rose" />
-                  <StatCard label="Remaining now" value={currency(monthlyRemaining)} sub="Income − Bills − Spent" tone={monthlyRemaining >= 0 ? "emerald" : "rose"} />
+                  <StatCard
+                    label="Income (this month)"
+                    value={currency(totalMonthlyIncome)}
+                    sub="Weekly/biweekly counts only actual paydays in this month"
+                    tone="emerald"
+                  />
+                  <StatCard
+                    label="Bills (monthly est.)"
+                    value={`-${currency(totalMonthlyBills).slice(1)}`}
+                    sub="Weekly bills count only occurrences in this month (yearly is prorated)"
+                    tone="rose"
+                  />
+                  <StatCard
+                    label="Spent (this month/week)"
+                    value={`-${currency(totalMonthlySpent).slice(1)}`}
+                    sub="Monthly buckets = month • Weekly = this week"
+                    tone="rose"
+                  />
+                  <StatCard
+                    label="Remaining now"
+                    value={currency(monthlyRemaining)}
+                    sub="Income − Bills − Spent"
+                    tone={monthlyRemaining >= 0 ? "emerald" : "rose"}
+                  />
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                  {/* Buckets */}
                   <div className="lg:col-span-2 bg-white rounded-2xl shadow border border-slate-100 p-4">
                     <div className="flex items-center justify-between">
                       <div>
@@ -859,114 +976,56 @@
                     </div>
                   </div>
 
-                  {/* Weekly cashflow */}
                   <div className="bg-white rounded-2xl shadow border border-slate-100 p-4">
-                    <h2 className="text-lg font-extrabold text-slate-800">Weekly cashflow</h2>
-                    <div className="text-xs text-slate-500 mt-1">
-                      Based on your custom week start: <span className="font-semibold text-slate-700">{weekStartLabel}</span>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h2 className="text-lg font-extrabold text-slate-800">Bills funding</h2>
+                        <div className="text-xs text-slate-500 mt-1">
+                          Bills due this month (actual): <span className="font-semibold text-slate-700">{currency(totalBillsDueThisMonth)}</span>
+                        </div>
+                      </div>
+                      {usedFallbackPaydays && (
+                        <Pill className="bg-amber-50 text-amber-800 border-amber-200">
+                          ⚠️ 4-paycheck estimate
+                        </Pill>
+                      )}
                     </div>
 
-                    {(missingIncomeAnchors.length > 0 || missingBillAnchors.length > 0) && (
-                      <div className="mt-3 p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-sm">
-                        <div className="font-semibold">⚠️ Some repeating items are missing anchor dates</div>
-                        <div className="mt-1 text-xs">
-                          Weekly/biweekly schedules will be “best guess” until you set an anchor date.
-                        </div>
+                    <div className="mt-4 p-3 rounded-2xl border border-indigo-100 bg-indigo-50">
+                      <div className="text-xs uppercase tracking-wide text-indigo-700 font-semibold">Set aside per paycheck</div>
+                      <div className="mt-1 text-3xl font-extrabold text-indigo-800">{currency(perPaycheckSetAsideForBills)}</div>
+                      <div className="text-xs text-indigo-700 mt-2">
+                        {currency(totalBillsDueThisMonth)} ÷ {paydaysThisMonth} paychecks
                       </div>
-                    )}
-
-                    {/* THIS WEEK */}
-                    <div className="mt-4 p-3 rounded-2xl border border-slate-100 bg-slate-50">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-xs uppercase tracking-wide text-slate-500">This week</div>
-                          <div className="text-sm font-semibold text-slate-800 mt-1">
-                            {niceDate(fmtDate(thisWeekStart))} → {niceDate(fmtDate(thisWeekEnd))}
-                          </div>
+                      {mainPaycheck && (
+                        <div className="text-xs text-indigo-700 mt-1">
+                          Main paycheck: <span className="font-semibold">{mainPaycheck.name}</span> · Next: {nextSingleDueDate(mainPaycheck)}
                         </div>
-                        <div className={`text-base font-extrabold ${thisWeekTotals.leftover >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                          {currency(thisWeekTotals.leftover)}
+                      )}
+                      {usedFallbackPaydays && (
+                        <div className="text-xs text-amber-800 mt-2">
+                          Add/verify your main paycheck anchor date on the Income tab to calculate exact paychecks this month.
                         </div>
-                      </div>
-
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <div className="p-2 rounded-xl bg-white border border-slate-100">
-                          <div className="text-xs text-slate-500">Income</div>
-                          <div className="text-sm font-extrabold text-emerald-700">+{currency(thisWeekTotals.income).slice(1)}</div>
-                        </div>
-                        <div className="p-2 rounded-xl bg-white border border-slate-100">
-                          <div className="text-xs text-slate-500">Bills</div>
-                          <div className="text-sm font-extrabold text-rose-700">-{currency(thisWeekTotals.bills).slice(1)}</div>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 space-y-2">
-                        {thisWeekEvents.length === 0 ? (
-                          <div className="text-sm text-slate-500">No income or bills this week.</div>
-                        ) : thisWeekEvents.map(e => (
-                          <div key={e.id} className="flex items-center justify-between text-sm">
-                            <div className="text-slate-700">
-                              <span className="font-semibold">{niceDate(e.date)}</span>
-                              <span className="text-slate-400"> · </span>
-                              <span className={`text-xs px-2 py-0.5 rounded-full border ${badge(e.type)} mr-2`}>
-                                {e.type === "income" ? "INCOME" : "BILL"}
-                              </span>
-                              {e.name}
-                            </div>
-                            <div className={`font-extrabold ${e.type === "income" ? "text-emerald-700" : "text-rose-700"}`}>
-                              {e.type === "income" ? "+" : "-"}{currency(e.amount).slice(1)}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      )}
                     </div>
 
-                    {/* NEXT WEEK */}
-                    <div className="mt-4 p-3 rounded-2xl border border-slate-100 bg-slate-50">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-xs uppercase tracking-wide text-slate-500">Next week</div>
-                          <div className="text-sm font-semibold text-slate-800 mt-1">
-                            {niceDate(fmtDate(nextWeekStart))} → {niceDate(fmtDate(nextWeekEnd))}
+                    <div className="mt-4 space-y-2">
+                      {monthBills.length === 0 ? (
+                        <div className="text-sm text-slate-500">No bills scheduled in this month.</div>
+                      ) : monthBills.slice(0, 12).map(e => (
+                        <div key={e.id} className="flex items-center justify-between text-sm">
+                          <div className="text-slate-700">
+                            <span className="font-semibold">{niceDate(e.date)}</span>
+                            <span className="text-slate-400"> · </span>
+                            {e.name}
                           </div>
+                          <div className="font-extrabold text-rose-700">-{currency(e.amount).slice(1)}</div>
                         </div>
-                        <div className={`text-base font-extrabold ${nextWeekTotals.leftover >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                          {currency(nextWeekTotals.leftover)}
-                        </div>
-                      </div>
-
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <div className="p-2 rounded-xl bg-white border border-slate-100">
-                          <div className="text-xs text-slate-500">Income</div>
-                          <div className="text-sm font-extrabold text-emerald-700">+{currency(nextWeekTotals.income).slice(1)}</div>
-                        </div>
-                        <div className="p-2 rounded-xl bg-white border border-slate-100">
-                          <div className="text-xs text-slate-500">Bills</div>
-                          <div className="text-sm font-extrabold text-rose-700">-{currency(nextWeekTotals.bills).slice(1)}</div>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 space-y-2">
-                        {nextWeekEvents.length === 0 ? (
-                          <div className="text-sm text-slate-500">No income or bills next week.</div>
-                        ) : nextWeekEvents.map(e => (
-                          <div key={e.id} className="flex items-center justify-between text-sm">
-                            <div className="text-slate-700">
-                              <span className="font-semibold">{niceDate(e.date)}</span>
-                              <span className="text-slate-400"> · </span>
-                              <span className={`text-xs px-2 py-0.5 rounded-full border ${badge(e.type)} mr-2`}>
-                                {e.type === "income" ? "INCOME" : "BILL"}
-                              </span>
-                              {e.name}
-                            </div>
-                            <div className={`font-extrabold ${e.type === "income" ? "text-emerald-700" : "text-rose-700"}`}>
-                              {e.type === "income" ? "+" : "-"}{currency(e.amount).slice(1)}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      ))}
+                      {monthBills.length > 12 && (
+                        <div className="text-xs text-slate-500">…and {monthBills.length - 12} more bills this month</div>
+                      )}
                     </div>
-
                   </div>
                 </div>
               </section>
@@ -991,38 +1050,7 @@
 
                         <div className="flex items-center justify-between text-sm text-slate-600 mb-2">
                           <div>Spent: <span className="font-medium text-slate-800">{currency(b.spent)}</span></div>
-                          <div>
-                            Budget:{" "}
-                            {editBucketId === b.id ? (
-                              <>
-                                <input
-                                  type="number"
-                                  className="border rounded px-1 py-0.5 text-sm w-20 mr-1"
-                                  value={editBucketAmount}
-                                  onChange={(e) => setEditBucketAmount(e.target.value)}
-                                />
-                                <button
-                                  className="text-xs text-indigo-600 font-semibold mr-1"
-                                  onClick={() => {
-                                    const val = round2(parseFloat(editBucketAmount));
-                                    if (!Number.isFinite(val) || val < 0) return;
-                                    setBuckets((prev) => prev.map(bk => bk.id === b.id ? { ...bk, budgeted: val } : bk));
-                                    setEditBucketId(null);
-                                  }}
-                                >
-                                  Save
-                                </button>
-                                <button className="text-xs text-slate-400" onClick={() => setEditBucketId(null)}>Cancel</button>
-                              </>
-                            ) : (
-                              <span
-                                className="font-medium text-slate-800 cursor-pointer underline decoration-dotted"
-                                onClick={() => { setEditBucketId(b.id); setEditBucketAmount(String(b.budgeted)); }}
-                              >
-                                {currency(b.budgeted)}
-                              </span>
-                            )}
-                          </div>
+                          <div>Budget: <span className="font-medium text-slate-800">{currency(b.budgeted)}</span></div>
                         </div>
 
                         <div className="w-full bg-slate-100 h-2 rounded overflow-hidden">
@@ -1036,7 +1064,7 @@
 
                         <div className="mt-3 flex items-center justify-between">
                           <div className="text-xs text-slate-500">
-                            Monthly (calendar-aware): <span className="font-semibold text-slate-700">{currency(monthlyFromBudget(b))}</span>
+                            Monthly (estimate): <span className="font-semibold text-slate-700">{currency(monthlyFromBudget(b))}</span>
                           </div>
                           <div className="flex gap-2">
                             <button onClick={() => resetBucket(b.id)} className="px-2 py-1 text-xs rounded bg-sky-100 text-sky-700 hover:bg-sky-200">Reset</button>
@@ -1077,107 +1105,64 @@
             {/* -------------------- INCOME -------------------- */}
             {activeTab === "income" && (
               <section>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4 sm:mb-6">
-                  <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <h3 className="font-semibold text-slate-800 mb-3">Income</h3>
-                    <div className="space-y-3">
-                      {recurringIncome
-                        .slice()
-                        .sort((a,b) => (String(nextSingleDueDate(a)) > String(nextSingleDueDate(b)) ? 1 : -1))
-                        .map((i) => (
-                        <div key={i.id} className="flex items-center justify-between p-3 rounded border border-slate-100 bg-slate-50">
-                          <div>
-                            <div className="font-medium text-slate-800 flex items-center gap-2 flex-wrap">
-                              <span>{i.name}</span>
-                              {isMissingAnchorIncome(i) && <WarnPill text="Missing anchor date" />}
-                              {isMissingDateOnceIncome(i) && <WarnPill text="Missing date" />}
-                              <span className="text-slate-500 font-normal">·{" "}
-                                {editIncomeId === i.id ? (
-                                  <>
-                                    <input type="number" className="border rounded px-1 py-0.5 text-xs w-16 mr-1" value={editIncomeAmount} onChange={(e) => setEditIncomeAmount(e.target.value)} />
-                                    <button
-                                      className="text-xs text-indigo-600 font-semibold mr-1"
-                                      onClick={() => {
-                                        const val = round2(parseFloat(editIncomeAmount));
-                                        if (!Number.isFinite(val) || val < 0) return;
-                                        setRecurringIncome((prev) => prev.map(inc => inc.id === i.id ? { ...inc, amount: val } : inc));
-                                        setEditIncomeId(null);
-                                      }}
-                                    >
-                                      Save
-                                    </button>
-                                    <button className="text-xs text-slate-400" onClick={() => setEditIncomeId(null)}>Cancel</button>
-                                  </>
-                                ) : (
-                                  <span className="cursor-pointer underline decoration-dotted" onClick={() => { setEditIncomeId(i.id); setEditIncomeAmount(String(i.amount)); }}>
-                                    {currency(i.amount)}
-                                  </span>
-                                )}
-                              </span>
-                            </div>
-
-                            <div className="text-xs text-slate-500">
-                              {i.frequency === "once"
-                                ? <>one-time · On: <span className="font-medium text-slate-700">{i.nextDate || "—"}</span></>
-                                : <>{i.frequency} · Next: <span className="font-medium text-slate-700">{nextSingleDueDate(i)}</span></>
-                              }
-                            </div>
-
-                            {(i.frequency === "weekly" || i.frequency === "biweekly") && !parseYMDLocal(i.nextDate) && (
-                              <div className="mt-1 text-xs text-amber-800">
-                                Set an anchor date (your actual payday) to keep weekdays accurate.
-                              </div>
-                            )}
+                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
+                  <h3 className="font-semibold text-slate-800 mb-3">Income</h3>
+                  <div className="space-y-3">
+                    {recurringIncome
+                      .slice()
+                      .sort((a,b) => (String(nextSingleDueDate(a)) > String(nextSingleDueDate(b)) ? 1 : -1))
+                      .map((i) => (
+                      <div key={i.id} className="flex items-center justify-between p-3 rounded border border-slate-100 bg-slate-50">
+                        <div>
+                          <div className="font-medium text-slate-800 flex items-center gap-2 flex-wrap">
+                            <span>{i.name}</span>
+                            {isMissingAnchorIncome(i) && <WarnPill text="Missing anchor date" />}
+                            {isMissingDateOnceIncome(i) && <WarnPill text="Missing date" />}
+                            <span className="text-slate-500 font-normal">· {currency(i.amount)}</span>
                           </div>
-
-                          <button onClick={() => deleteIncome(i.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
+                          <div className="text-xs text-slate-500">
+                            {i.frequency === "once"
+                              ? <>one-time · On: <span className="font-medium text-slate-700">{i.nextDate || "—"}</span></>
+                              : <>{i.frequency} · Next: <span className="font-medium text-slate-700">{nextSingleDueDate(i)}</span></>
+                            }
+                          </div>
                         </div>
-                      ))}
+                        <button onClick={() => deleteIncome(i.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <hr className="my-4"/>
+
+                  <h3 className="font-semibold text-slate-800 mb-3">Add Income</h3>
+                  <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={(e) => { e.preventDefault(); addIncome(); }}>
+                    <div className="flex flex-col gap-1 w-full max-w-[160px]">
+                      <label className="text-xs text-slate-600 font-medium">Name</label>
+                      <input className="border rounded px-2 py-1 text-sm w-full" value={newIncome.name} onChange={(e) => setNewIncome({ ...newIncome, name: e.target.value })} />
                     </div>
-                  </div>
-
-                  <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <h3 className="font-semibold text-slate-800 mb-3">Add Income</h3>
-                    <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={(e) => { e.preventDefault(); addIncome(); }}>
-                      <div className="flex flex-col gap-1 w-full max-w-[160px]">
-                        <label className="text-xs text-slate-600 font-medium">Name</label>
-                        <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Name" value={newIncome.name} onChange={(e) => setNewIncome({ ...newIncome, name: e.target.value })} />
-                      </div>
-                      <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                        <label className="text-xs text-slate-600 font-medium">Amount</label>
-                        <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newIncome.amount} onChange={(e) => setNewIncome({ ...newIncome, amount: e.target.value })} />
-                      </div>
-                      <div className="flex flex-col gap-1 w-full max-w-[130px]">
-                        <label className="text-xs text-slate-600 font-medium">Frequency</label>
-                        <select className="border rounded px-2 py-1 text-sm w-full" value={newIncome.frequency} onChange={(e) => setNewIncome({ ...newIncome, frequency: e.target.value })}>
-                          <option value="monthly">Monthly</option>
-                          <option value="weekly">Weekly</option>
-                          <option value="biweekly">Bi-weekly</option>
-                          <option value="once">One-time</option>
-                        </select>
-                      </div>
-                      <div className="flex flex-col gap-1 w-full max-w-[150px]">
-                        <label className="text-xs text-slate-600 font-medium">
-                          {newIncome.frequency === "once" ? "Date" : "Anchor / Next Date"}
-                        </label>
-                        <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newIncome.nextDate} onChange={(e) => setNewIncome({ ...newIncome, nextDate: e.target.value })} />
-                      </div>
-                      <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">
-                        Add
-                      </button>
-                    </form>
-
-                    {(newIncome.frequency === "weekly" || newIncome.frequency === "biweekly") && !parseYMDLocal(newIncome.nextDate) && (
-                      <div className="mt-2 text-xs text-amber-800">
-                        ⚠️ Set an anchor date (your real payday) so Friday stays Friday.
-                      </div>
-                    )}
-                    {newIncome.frequency === "once" && !parseYMDLocal(newIncome.nextDate) && (
-                      <div className="mt-2 text-xs text-amber-800">
-                        ⚠️ One-time income needs a date to show up correctly.
-                      </div>
-                    )}
-                  </div>
+                    <div className="flex flex-col gap-1 w-full max-w-[120px]">
+                      <label className="text-xs text-slate-600 font-medium">Amount</label>
+                      <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newIncome.amount} onChange={(e) => setNewIncome({ ...newIncome, amount: e.target.value })} />
+                    </div>
+                    <div className="flex flex-col gap-1 w-full max-w-[130px]">
+                      <label className="text-xs text-slate-600 font-medium">Frequency</label>
+                      <select className="border rounded px-2 py-1 text-sm w-full" value={newIncome.frequency} onChange={(e) => setNewIncome({ ...newIncome, frequency: e.target.value })}>
+                        <option value="monthly">Monthly</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="biweekly">Bi-weekly</option>
+                        <option value="once">One-time</option>
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1 w-full max-w-[150px]">
+                      <label className="text-xs text-slate-600 font-medium">
+                        {newIncome.frequency === "once" ? "Date" : "Anchor / Next Date"}
+                      </label>
+                      <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newIncome.nextDate} onChange={(e) => setNewIncome({ ...newIncome, nextDate: e.target.value })} />
+                    </div>
+                    <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">
+                      Add
+                    </button>
+                  </form>
                 </div>
               </section>
             )}
@@ -1185,10 +1170,46 @@
             {/* -------------------- BILLS -------------------- */}
             {activeTab === "bills" && (
               <section>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4 sm:mb-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <h3 className="font-semibold text-slate-800 mb-3">Bills</h3>
-                    <div className="space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h3 className="font-semibold text-slate-800 mb-1">Bills</h3>
+                        <div className="text-xs text-slate-500">
+                          This month due (actual): <span className="font-semibold text-slate-700">{currency(totalBillsDueThisMonth)}</span>
+                        </div>
+                      </div>
+                      {usedFallbackPaydays && (
+                        <Pill className="bg-amber-50 text-amber-800 border-amber-200">
+                          ⚠️ 4-paycheck estimate
+                        </Pill>
+                      )}
+                    </div>
+
+                    <div className="mt-3 p-3 rounded-xl border border-indigo-100 bg-indigo-50">
+                      <div className="text-xs uppercase tracking-wide text-indigo-700 font-semibold">
+                        Set aside per paycheck
+                      </div>
+                      <div className="mt-1 text-3xl font-extrabold text-indigo-800">
+                        {currency(perPaycheckSetAsideForBills)}
+                      </div>
+                      <div className="text-xs text-indigo-700 mt-1">
+                        {currency(totalBillsDueThisMonth)} ÷ {paydaysThisMonth} paychecks
+                      </div>
+                      <div className="text-xs text-indigo-700 mt-1">
+                        Paychecks counted: <span className="font-semibold">{paydaysThisMonth}</span>
+                        {mainPaycheck ? (
+                          <> · Main paycheck: <span className="font-semibold">{mainPaycheck.name}</span> · Next: {nextSingleDueDate(mainPaycheck)}</>
+                        ) : null}
+                      </div>
+                      {usedFallbackPaydays && (
+                        <div className="text-xs text-amber-800 mt-2">
+                          Fix: set an anchor date for your main weekly/biweekly paycheck in the Income tab.
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-4 space-y-3">
                       {recurringBills
                         .slice()
                         .sort((a, b) => (String(nextSingleDueDate(a)) > String(nextSingleDueDate(b)) ? 1 : -1))
@@ -1198,42 +1219,12 @@
                               <div className="font-medium text-slate-800 flex items-center gap-2 flex-wrap">
                                 <span>{b.name}</span>
                                 {isMissingAnchorBill(b) && <WarnPill text="Missing anchor date" />}
-                                <span className="text-slate-500 font-normal">·{" "}
-                                  {editBillId === b.id ? (
-                                    <>
-                                      <input type="number" className="border rounded px-1 py-0.5 text-xs w-16 mr-1" value={editBillAmount} onChange={(e) => setEditBillAmount(e.target.value)} />
-                                      <button
-                                        className="text-xs text-indigo-600 font-semibold mr-1"
-                                        onClick={() => {
-                                          const val = round2(parseFloat(editBillAmount));
-                                          if (!Number.isFinite(val) || val < 0) return;
-                                          setRecurringBills((prev) => prev.map(bb => bb.id === b.id ? { ...bb, amount: val } : bb));
-                                          setEditBillId(null);
-                                        }}
-                                      >
-                                        Save
-                                      </button>
-                                      <button className="text-xs text-slate-400" onClick={() => setEditBillId(null)}>Cancel</button>
-                                    </>
-                                  ) : (
-                                    <span className="cursor-pointer underline decoration-dotted" onClick={() => { setEditBillId(b.id); setEditBillAmount(String(b.amount)); }}>
-                                      {currency(b.amount)}
-                                    </span>
-                                  )}
-                                </span>
+                                <span className="text-slate-500 font-normal">· {currency(b.amount)}</span>
                               </div>
-
                               <div className="text-xs text-slate-500">
                                 {b.frequency} · Next: <span className="font-medium text-slate-700">{nextSingleDueDate(b)}</span>
                               </div>
-
-                              {b.frequency === "weekly" && !parseYMDLocal(b.nextDate) && (
-                                <div className="mt-1 text-xs text-amber-800">
-                                  Set an anchor date for correct weekly scheduling.
-                                </div>
-                              )}
                             </div>
-
                             <button onClick={() => deleteBill(b.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
                           </div>
                         ))}
@@ -1246,12 +1237,12 @@
                     <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={(e) => { e.preventDefault(); addBill(); }}>
                       <div className="flex flex-col gap-1 w-full max-w-[160px]">
                         <label className="text-xs text-slate-600 font-medium">Name</label>
-                        <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Name" value={newBill.name} onChange={(e) => setNewBill({ ...newBill, name: e.target.value })} />
+                        <input className="border rounded px-2 py-1 text-sm w-full" value={newBill.name} onChange={(e) => setNewBill({ ...newBill, name: e.target.value })} />
                       </div>
 
                       <div className="flex flex-col gap-1 w-full max-w-[120px]">
                         <label className="text-xs text-slate-600 font-medium">Amount</label>
-                        <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newBill.amount} onChange={(e) => setNewBill({ ...newBill, amount: e.target.value })} />
+                        <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newBill.amount} onChange={(e) => setNewBill({ ...newBill, amount: e.target.value })} />
                       </div>
 
                       <div className="flex flex-col gap-1 w-full max-w-[120px]">
@@ -1311,7 +1302,6 @@
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
                   <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Transactions</h3>
-
                     <div className="space-y-3">
                       {transactions
                         .slice()
@@ -1321,40 +1311,9 @@
                           return (
                             <div key={t.id} className="flex items-center justify-between p-3 rounded border border-slate-100 bg-slate-50">
                               <div>
-                                <div className="font-medium text-slate-800">
-                                  {t.description}{" "}
-                                  <span className="text-slate-500 font-normal">·{" "}
-                                    {editTransactionId === t.id ? (
-                                      <>
-                                        <input
-                                          type="number"
-                                          className="border rounded px-1 py-0.5 text-xs w-16 mr-1"
-                                          value={editTransactionAmount}
-                                          onChange={(e) => setEditTransactionAmount(e.target.value)}
-                                        />
-                                        <button
-                                          className="text-xs text-indigo-600 font-semibold mr-1"
-                                          onClick={() => {
-                                            const val = round2(parseFloat(editTransactionAmount));
-                                            if (!Number.isFinite(val) || val < 0) return;
-                                            setTransactions((prev) => prev.map(tx => tx.id === t.id ? { ...tx, amount: val } : tx));
-                                            setEditTransactionId(null);
-                                          }}
-                                        >
-                                          Save
-                                        </button>
-                                        <button className="text-xs text-slate-400" onClick={() => setEditTransactionId(null)}>Cancel</button>
-                                      </>
-                                    ) : (
-                                      <span className="cursor-pointer underline decoration-dotted" onClick={() => { setEditTransactionId(t.id); setEditTransactionAmount(String(t.amount)); }}>
-                                        {currency(t.amount)}
-                                      </span>
-                                    )}
-                                  </span>
-                                </div>
+                                <div className="font-medium text-slate-800">{t.description} <span className="text-slate-500 font-normal">· {currency(t.amount)}</span></div>
                                 <div className="text-xs text-slate-500">{t.date} · {bucketName}</div>
                               </div>
-
                               <button onClick={() => deleteTransaction(t.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
                             </div>
                           );
@@ -1364,7 +1323,6 @@
 
                   <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
                     <h3 className="font-semibold text-slate-800 mb-3">Add Transaction</h3>
-
                     <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={(e) => { e.preventDefault(); addTransaction(); }}>
                       <div className="flex flex-col gap-1 w-full max-w-[160px]">
                         <label className="text-xs text-slate-600 font-medium">Bucket</label>
@@ -1373,22 +1331,18 @@
                           {buckets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                         </select>
                       </div>
-
                       <div className="flex flex-col gap-1 w-full max-w-[110px]">
                         <label className="text-xs text-slate-600 font-medium">Amount</label>
                         <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.amount} onChange={(e) => setNewTransaction({ ...newTransaction, amount: e.target.value })} />
                       </div>
-
                       <div className="flex flex-col gap-1 w-full max-w-[220px]">
                         <label className="text-xs text-slate-600 font-medium">Description</label>
                         <input className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.description} onChange={(e) => setNewTransaction({ ...newTransaction, description: e.target.value })} />
                       </div>
-
                       <div className="flex flex-col gap-1 w-full max-w-[150px]">
                         <label className="text-xs text-slate-600 font-medium">Date</label>
                         <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.date} onChange={(e) => setNewTransaction({ ...newTransaction, date: e.target.value })} />
                       </div>
-
                       <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">
                         Add
                       </button>
