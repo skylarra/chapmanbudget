@@ -22,6 +22,10 @@
       const currency = (n) => `$${round2(n).toFixed(2)}`;
       const pad2 = (n) => String(n).padStart(2, "0");
       const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+      const safeNum = (v, fallback=0) => {
+        const x = Number(v);
+        return Number.isFinite(x) ? x : fallback;
+      };
 
       const fmtDate = (d) => {
         const date = new Date(d);
@@ -175,7 +179,6 @@
 
       // ---------------- Custom week start (based on biggest repeating income’s next weekday) ----------------
       const incomeMonthlyValueLegacy = (i) => {
-        // Only used to pick a week-start anchor. Totals use month-accurate counting elsewhere.
         const amt = Number(i.amount) || 0;
         if (i.frequency === "weekly") return amt * 4;
         if (i.frequency === "biweekly") return amt * 2;
@@ -276,10 +279,7 @@
 
           let d = new Date(anchor); d.setHours(0,0,0,0);
 
-          // Move anchor backward if it lands after the month
           while (d > end) d.setDate(d.getDate() - step);
-
-          // Walk back so we don't miss early-in-month occurrences
           while (d > start) d.setDate(d.getDate() - step);
           while (d < start) d.setDate(d.getDate() + step);
 
@@ -301,7 +301,7 @@
         return 0;
       };
 
-      // ---------------- Monthly math (UPDATED: uses actual occurrences in month) ----------------
+      // ---------------- Monthly math ----------------
       const monthlyFromBudget = (b) => {
         const w = countCustomWeeksInMonth();
         return b.period === "weekly" ? round2((b.budgeted || 0) * w) : round2(b.budgeted || 0);
@@ -323,8 +323,8 @@
           const count = countOccurrencesInSelectedMonth({ ...b, frequency: "weekly" });
           return round2((b.amount || 0) * count);
         }
-        if (b.frequency === "yearly") return round2((b.amount || 0) / 12); // estimate for monthly totals
-        return round2(b.amount || 0); // monthly
+        if (b.frequency === "yearly") return round2((b.amount || 0) / 12);
+        return round2(b.amount || 0);
       };
 
       const totalMonthlyIncome = recurringIncome.reduce((s, i) => s + monthlyFromIncome(i), 0);
@@ -334,7 +334,7 @@
       const monthlyRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlySpent);
       const projectedRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlyBudgeted);
 
-      // ---------------- Main paycheck + paydays count (for bills set-aside per paycheck) ----------------
+      // ---------------- Main paycheck + paydays count ----------------
       const getMainPaycheck = () => {
         const repeating = recurringIncome.filter(i => i.frequency !== "once");
         if (!repeating.length) return null;
@@ -352,10 +352,7 @@
       const countPaydaysInSelectedMonth = () => {
         const main = getMainPaycheck();
         if (!main) return 0;
-
-        if (main.frequency === "weekly" || main.frequency === "biweekly") {
-          return countOccurrencesInSelectedMonth(main);
-        }
+        if (main.frequency === "weekly" || main.frequency === "biweekly") return countOccurrencesInSelectedMonth(main);
         if (main.frequency === "monthly") return 1;
         return 0;
       };
@@ -393,20 +390,17 @@
           return out;
         }
 
-        // ✅ FIX: weekly/biweekly should NOT miss earlier-in-range occurrences
+        // ✅ FIX: weekly/biweekly should not miss early-in-range
         if (item.frequency === "weekly" || item.frequency === "biweekly") {
           const step = item.frequency === "weekly" ? 7 : 14;
           const anchor = parseYMDLocal(item.nextDate);
           if (!anchor) return out;
 
           let d = new Date(anchor); d.setHours(0,0,0,0);
-
-          // Move backward into vicinity so we don't miss early range occurrences
           while (d > end) d = addDays(d, -step);
           while (d > start) d = addDays(d, -step);
-
-          // Step forward and collect in-range
           while (d < start) d = addDays(d, step);
+
           while (d <= end) {
             out.push({ type: kind, id: `${kind}-${item.id}-${fmtDate(d)}`, name, amount, frequency: item.frequency, date: fmtDate(d) });
             d = addDays(d, step);
@@ -512,6 +506,12 @@
         return "bg-green-500";
       };
 
+      const Pill = ({ children, className="" }) => (
+        <span className={`inline-flex items-center text-xs px-2 py-1 rounded-full border ${className}`}>
+          {children}
+        </span>
+      );
+
       const WarnPill = ({ text }) => (
         <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border bg-amber-50 text-amber-800 border-amber-200">
           ⚠️ {text}
@@ -534,11 +534,24 @@
         );
       };
 
-      const Pill = ({ children, className="" }) => (
-        <span className={`inline-flex items-center text-xs px-2 py-0.5 rounded-full border ${className}`}>
+      const Card = ({ children, className="" }) => (
+        <div className={`bg-white rounded-2xl shadow border border-slate-100 ${className}`}>
           {children}
-        </span>
+        </div>
       );
+
+      const Field = ({ label, children }) => (
+        <label className="block">
+          <div className="text-xs text-slate-600 font-medium mb-1">{label}</div>
+          {children}
+        </label>
+      );
+
+      const inputBase = "border rounded-lg px-2 py-1 text-sm w-full bg-white shadow-sm";
+      const buttonBase = "px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm";
+      const btnPrimary = "bg-indigo-600 hover:bg-indigo-700 text-white";
+      const btnSoft = "bg-slate-100 hover:bg-slate-200 text-slate-700";
+      const btnDanger = "bg-rose-100 hover:bg-rose-200 text-rose-700";
 
       // ---------------- CRUD: Transactions ----------------
       const todayStr = fmtDate(new Date());
@@ -589,8 +602,11 @@
       };
 
       const resetBucket = (id) => {
-        // IMPORTANT: no transaction deletion
         setBuckets((prev) => prev.map((b) => (b.id === id ? { ...b, spent: 0 } : b)));
+      };
+
+      const updateBucket = (id, patch) => {
+        setBuckets(prev => prev.map(b => b.id === id ? { ...b, ...patch } : b));
       };
 
       // ---------------- CRUD: Income ----------------
@@ -614,6 +630,23 @@
       };
 
       const deleteIncome = (id) => setRecurringIncome((prev) => prev.filter((i) => i.id !== id));
+
+      const normalizeIncome = (i) => {
+        const out = { ...i };
+        if (out.frequency === "monthly" && !out.nextDate) {
+          // optional, but helps pick a day-of-month
+          out.nextDate = fmtDate(floorLocalToday());
+        }
+        return out;
+      };
+
+      const updateIncome = (id, patch) => {
+        setRecurringIncome(prev => prev.map(i => {
+          if (i.id !== id) return i;
+          const merged = normalizeIncome({ ...i, ...patch });
+          return merged;
+        }));
+      };
 
       // ---------------- CRUD: Bills ----------------
       const [newBill, setNewBill] = React.useState({ name: "", amount: "", frequency: "monthly", dueDay: "", dueMonth: "", nextDate: "" });
@@ -640,6 +673,31 @@
       };
 
       const deleteBill = (id) => setRecurringBills((prev) => prev.filter((b) => b.id !== id));
+
+      const normalizeBill = (b) => {
+        const out = { ...b };
+        if (out.frequency === "monthly") {
+          out.dueDay = clamp(safeNum(out.dueDay ?? 1, 1), 1, 28);
+          delete out.dueMonth;
+          delete out.nextDate;
+        } else if (out.frequency === "yearly") {
+          out.dueMonth = clamp(safeNum(out.dueMonth ?? 1, 1), 1, 12);
+          out.dueDay = clamp(safeNum(out.dueDay ?? 1, 1), 1, 28);
+          delete out.nextDate;
+        } else if (out.frequency === "weekly") {
+          out.nextDate = out.nextDate || "";
+          delete out.dueMonth;
+          delete out.dueDay;
+        }
+        return out;
+      };
+
+      const updateBill = (id, patch) => {
+        setRecurringBills(prev => prev.map(b => {
+          if (b.id !== id) return b;
+          return normalizeBill({ ...b, ...patch });
+        }));
+      };
 
       // ---------------- Download / Upload summary (round-trip importable) ----------------
       const JSON_START = "---BEGIN_BUDGET_BUCKETS_JSON---";
@@ -675,10 +733,6 @@
         if (mainPaycheck) txt += `Main paycheck: ${mainPaycheck.name} (${mainPaycheck.frequency}, Next: ${nextSingleDueDate(mainPaycheck)})\n`;
         txt += `\n`;
 
-        txt += `🗓 WEEKLY CASHFLOW\n`;
-        txt += `This week (${fmtDate(thisWeekStart)} → ${fmtDate(thisWeekEnd)}): Income ${currency(thisWeekTotals.income)}, Bills -${currency(thisWeekTotals.bills).slice(1)}, Leftover ${currency(thisWeekTotals.leftover)}\n`;
-        txt += `Next week (${fmtDate(nextWeekStart)} → ${fmtDate(nextWeekEnd)}): Income ${currency(nextWeekTotals.income)}, Bills -${currency(nextWeekTotals.bills).slice(1)}, Leftover ${currency(nextWeekTotals.leftover)}\n\n`;
-
         txt += `🧾 TRANSACTIONS (this month)\n`;
         txt += `Count: ${monthTxCount}  Total: ${currency(monthTxTotal)}\n`;
         monthTransactions.slice(0, 30).forEach(t => {
@@ -689,7 +743,7 @@
         txt += `\n`;
 
         const payload = {
-          version: 1,
+          version: 2,
           exportedAt: new Date().toISOString(),
           selectedYear,
           selectedMonth,
@@ -783,124 +837,185 @@
       const monthTxTotal = round2(monthTransactions.reduce((s, t) => s + (Number(t.amount) || 0), 0));
       const monthTxCount = monthTransactions.length;
 
+      // ---------------- Edit state (prevents “always showing a million inputs”) ----------------
+      const [editingBucketId, setEditingBucketId] = React.useState(null);
+      const [editingIncomeId, setEditingIncomeId] = React.useState(null);
+      const [editingBillId, setEditingBillId] = React.useState(null);
+
+      const [bucketDraft, setBucketDraft] = React.useState(null);
+      const [incomeDraft, setIncomeDraft] = React.useState(null);
+      const [billDraft, setBillDraft] = React.useState(null);
+
+      const startEditBucket = (b) => { setEditingBucketId(b.id); setBucketDraft({ ...b, budgeted: String(b.budgeted ?? "") }); };
+      const cancelEditBucket = () => { setEditingBucketId(null); setBucketDraft(null); };
+      const saveEditBucket = () => {
+        if (!bucketDraft) return;
+        updateBucket(bucketDraft.id, {
+          name: String(bucketDraft.name || "").trim() || "Bucket",
+          budgeted: round2(parseFloat(bucketDraft.budgeted || "0")),
+          period: bucketDraft.period === "weekly" ? "weekly" : "monthly"
+        });
+        cancelEditBucket();
+      };
+
+      const startEditIncome = (i) => { setEditingIncomeId(i.id); setIncomeDraft({ ...i, amount: String(i.amount ?? "") }); };
+      const cancelEditIncome = () => { setEditingIncomeId(null); setIncomeDraft(null); };
+      const saveEditIncome = () => {
+        if (!incomeDraft) return;
+        const freq = incomeDraft.frequency;
+        const nextDate = incomeDraft.nextDate || "";
+        // If weekly/biweekly/once and missing anchor/date, we still allow save, but warnings will show.
+        updateIncome(incomeDraft.id, {
+          name: String(incomeDraft.name || "").trim() || "Income",
+          amount: round2(parseFloat(incomeDraft.amount || "0")),
+          frequency: freq,
+          nextDate: nextDate
+        });
+        cancelEditIncome();
+      };
+
+      const startEditBill = (b) => {
+        setEditingBillId(b.id);
+        setBillDraft({
+          ...b,
+          amount: String(b.amount ?? ""),
+          dueDay: b.dueDay != null ? String(b.dueDay) : "",
+          dueMonth: b.dueMonth != null ? String(b.dueMonth) : "",
+          nextDate: b.nextDate || ""
+        });
+      };
+      const cancelEditBill = () => { setEditingBillId(null); setBillDraft(null); };
+      const saveEditBill = () => {
+        if (!billDraft) return;
+        const freq = billDraft.frequency;
+        const patch = {
+          name: String(billDraft.name || "").trim() || "Bill",
+          amount: round2(parseFloat(billDraft.amount || "0")),
+          frequency: freq,
+        };
+        if (freq === "monthly") patch.dueDay = clamp(parseInt(billDraft.dueDay || "1", 10), 1, 28);
+        if (freq === "yearly") {
+          patch.dueMonth = clamp(parseInt(billDraft.dueMonth || "1", 10), 1, 12);
+          patch.dueDay = clamp(parseInt(billDraft.dueDay || "1", 10), 1, 28);
+        }
+        if (freq === "weekly") patch.nextDate = billDraft.nextDate || "";
+        updateBill(billDraft.id, patch);
+        cancelEditBill();
+      };
+
       // ---------------- Render ----------------
       return (
         <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-sky-50 to-emerald-50">
           <div className="max-w-6xl mx-auto p-2 sm:p-4 md:p-6">
 
-            {/* -------------------- HEADER (cleaner) -------------------- */}
+            {/* -------------------- HEADER (less hoarded) -------------------- */}
             <header className="mb-4 sm:mb-6">
-              <div className="bg-white/70 backdrop-blur rounded-2xl border border-slate-100 shadow-sm p-3 sm:p-4">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                  <div className="min-w-0">
-                    <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800">💰 Budget Buckets</h1>
+              <div className="bg-white/80 backdrop-blur rounded-2xl border border-slate-100 shadow-sm">
+                <div className="p-3 sm:p-4">
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800">💰 Budget Buckets</h1>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Pill className="bg-slate-50 text-slate-700 border-slate-200">
+                            {new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+                          </Pill>
+                          <Pill className="bg-sky-50 text-sky-700 border-sky-200">
+                            Week starts: <span className="ml-1 font-semibold">{weekStartLabel}</span>
+                          </Pill>
+                          <Pill className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                            Paychecks this month: <span className="ml-1 font-semibold">{paydaysThisMonth}</span>
+                          </Pill>
+                          {usedFallbackPaydays && (
+                            <Pill className="bg-amber-50 text-amber-800 border-amber-200">⚠️ estimate</Pill>
+                          )}
+                        </div>
+                      </div>
 
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                      <Pill className="bg-slate-50 text-slate-700 border-slate-200">
-                        Month: <span className="ml-1 font-semibold text-slate-900">
-                          {new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-                        </span>
-                      </Pill>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={selectedMonth}
+                          onChange={(e) => setSelectedMonth(parseInt(e.target.value, 10))}
+                          className={inputBase + " min-w-[120px]"}
+                        >
+                          {Array.from({ length: 12 }, (_, i) =>
+                            <option key={i} value={i}>
+                              {new Date(2000, i).toLocaleString("en-US", { month: "long" })}
+                            </option>
+                          )}
+                        </select>
 
-                      <Pill className="bg-sky-50 text-sky-700 border-sky-200">
-                        Weekly start: <span className="ml-1 font-semibold text-slate-900">{weekStartLabel}</span>
-                      </Pill>
+                        <input
+                          type="number"
+                          value={selectedYear}
+                          onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
+                          className={inputBase + " w-24"}
+                        />
 
-                      <Pill className="bg-emerald-50 text-emerald-700 border-emerald-200">
-                        Paychecks in month: <span className="ml-1 font-semibold text-slate-900">{paydaysThisMonth}</span>
-                      </Pill>
+                        <details className="relative">
+                          <summary className={buttonBase + " " + btnSoft + " cursor-pointer list-none"}>
+                            Tools ▾
+                          </summary>
+                          <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-lg p-2 z-10">
+                            <button
+                              onClick={downloadMonthlySummary}
+                              className={buttonBase + " " + btnPrimary + " w-full"}
+                            >
+                              Download Summary
+                            </button>
 
-                      {usedFallbackPaydays && (
-                        <Pill className="bg-amber-50 text-amber-800 border-amber-200">
-                          ⚠️ Using 4-paycheck estimate
-                        </Pill>
-                      )}
+                            <label className={buttonBase + " " + btnSoft + " w-full mt-2 text-center cursor-pointer block"}>
+                              Upload Summary
+                              <input type="file" accept=".txt" onChange={handleSummaryUpload} className="hidden" />
+                            </label>
+
+                            {mainPaycheck && (
+                              <div className="mt-2 text-xs text-slate-600">
+                                Main paycheck: <span className="font-semibold">{mainPaycheck.name}</span><br/>
+                                Next: <span className="font-semibold">{nextSingleDueDate(mainPaycheck)}</span>
+                              </div>
+                            )}
+                          </div>
+                        </details>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select
-                      value={selectedMonth}
-                      onChange={(e) => setSelectedMonth(parseInt(e.target.value, 10))}
-                      className="border rounded-lg px-2 py-1 bg-white shadow-sm text-sm min-w-[120px]"
-                    >
-                      {Array.from({ length: 12 }, (_, i) =>
-                        <option key={i} value={i}>
-                          {new Date(2000, i).toLocaleString("en-US", { month: "long" })}
-                        </option>
-                      )}
-                    </select>
-
-                    <input
-                      type="number"
-                      value={selectedYear}
-                      onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
-                      className="border rounded-lg px-2 py-1 w-24 bg-white shadow-sm text-sm"
-                    />
-                  </div>
-                </div>
-
-                {/* Collapsible: tools + warnings */}
-                <details className="mt-3">
-                  <summary className="cursor-pointer text-sm text-slate-600 select-none">
-                    More tools & details
-                  </summary>
-
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <button
-                      onClick={downloadMonthlySummary}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded shadow text-sm"
-                    >
-                      Download Summary
-                    </button>
-
-                    <label className="text-xs text-slate-600 font-medium cursor-pointer bg-white px-3 py-1 rounded shadow-sm border border-slate-200 hover:bg-slate-50">
-                      Upload Summary
-                      <input type="file" accept=".txt" onChange={handleSummaryUpload} className="hidden" />
-                    </label>
-
-                    {mainPaycheck && (
-                      <div className="text-xs text-slate-500">
-                        Main paycheck: <span className="font-semibold text-slate-700">{mainPaycheck.name}</span>
-                        {" "}({mainPaycheck.frequency}{mainPaycheck.frequency !== "monthly" ? ", anchor " + (mainPaycheck.nextDate || "—") : ""})
-                        {" "}· Next: <span className="font-semibold text-slate-700">{nextSingleDueDate(mainPaycheck)}</span>
+                    {hasAnyAnchorWarnings && (
+                      <div className="p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-900">
+                        <div className="font-semibold text-sm">⚠️ Setup warnings (fix for accurate scheduling)</div>
+                        <ul className="mt-1 text-sm list-disc ml-5">
+                          {missingIncomeAnchors.length > 0 && (
+                            <li>Weekly/biweekly income missing anchor date: <span className="font-semibold">{missingIncomeAnchors.map(x => x.name).join(", ")}</span></li>
+                          )}
+                          {missingBillAnchors.length > 0 && (
+                            <li>Weekly bills missing anchor date: <span className="font-semibold">{missingBillAnchors.map(x => x.name).join(", ")}</span></li>
+                          )}
+                          {missingOnceDates.length > 0 && (
+                            <li>One-time income missing date: <span className="font-semibold">{missingOnceDates.map(x => x.name).join(", ")}</span></li>
+                          )}
+                        </ul>
                       </div>
                     )}
                   </div>
+                </div>
 
-                  {hasAnyAnchorWarnings && (
-                    <div className="mt-3 p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-900">
-                      <div className="font-semibold text-sm">⚠️ Setup warnings (fix these for accurate scheduling)</div>
-                      <ul className="mt-1 text-sm list-disc ml-5">
-                        {missingIncomeAnchors.length > 0 && (
-                          <li>Weekly/biweekly income missing anchor date: <span className="font-semibold">{missingIncomeAnchors.map(x => x.name).join(", ")}</span></li>
-                        )}
-                        {missingBillAnchors.length > 0 && (
-                          <li>Weekly bills missing anchor date: <span className="font-semibold">{missingBillAnchors.map(x => x.name).join(", ")}</span></li>
-                        )}
-                        {missingOnceDates.length > 0 && (
-                          <li>One-time income missing date: <span className="font-semibold">{missingOnceDates.map(x => x.name).join(", ")}</span></li>
-                        )}
-                      </ul>
-                    </div>
-                  )}
-                </details>
+                <div className="border-t border-slate-100 px-3 sm:px-4 py-2">
+                  <nav className="flex flex-wrap gap-2">
+                    {["summary", "buckets", "income", "bills", "transactions"].map(tab =>
+                      <button
+                        key={tab}
+                        onClick={() => setActiveTab(tab)}
+                        className={`px-3 py-1 rounded-full text-sm shadow ${
+                          activeTab === tab ? "bg-indigo-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
+                        }`}
+                      >
+                        {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                      </button>
+                    )}
+                  </nav>
+                </div>
               </div>
             </header>
-
-            <nav className="flex flex-wrap gap-2 mb-4 sm:mb-6">
-              {["summary", "buckets", "income", "bills", "transactions"].map(tab =>
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`px-3 py-1 rounded-full text-sm shadow ${
-                    activeTab === tab ? "bg-indigo-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"
-                  }`}
-                >
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                </button>
-              )}
-            </nav>
 
             {/* -------------------- SUMMARY -------------------- */}
             {activeTab === "summary" && (
@@ -933,7 +1048,7 @@
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                  <div className="lg:col-span-2 bg-white rounded-2xl shadow border border-slate-100 p-4">
+                  <Card className="lg:col-span-2 p-4">
                     <div className="flex items-center justify-between">
                       <div>
                         <h2 className="text-lg font-extrabold text-slate-800">Buckets at a glance</h2>
@@ -1000,9 +1115,9 @@
                         <div className="text-sm font-semibold text-slate-700">{currency(monthTxTotal)}</div>
                       </div>
                     </div>
-                  </div>
+                  </Card>
 
-                  <div className="bg-white rounded-2xl shadow border border-slate-100 p-4">
+                  <Card className="p-4">
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <h2 className="text-lg font-extrabold text-slate-800">Bills funding</h2>
@@ -1011,9 +1126,7 @@
                         </div>
                       </div>
                       {usedFallbackPaydays && (
-                        <Pill className="bg-amber-50 text-amber-800 border-amber-200">
-                          ⚠️ 4-paycheck estimate
-                        </Pill>
+                        <Pill className="bg-amber-50 text-amber-800 border-amber-200">⚠️ estimate</Pill>
                       )}
                     </div>
 
@@ -1026,11 +1139,6 @@
                       {mainPaycheck && (
                         <div className="text-xs text-indigo-700 mt-1">
                           Main paycheck: <span className="font-semibold">{mainPaycheck.name}</span> · Next: {nextSingleDueDate(mainPaycheck)}
-                        </div>
-                      )}
-                      {usedFallbackPaydays && (
-                        <div className="text-xs text-amber-800 mt-2">
-                          Add/verify your main paycheck anchor date on the Income tab to calculate exact paychecks this month.
                         </div>
                       )}
                     </div>
@@ -1052,281 +1160,409 @@
                         <div className="text-xs text-slate-500">…and {monthBills.length - 12} more bills this month</div>
                       )}
                     </div>
-                  </div>
+                  </Card>
                 </div>
               </section>
             )}
 
             {/* -------------------- BUCKETS -------------------- */}
             {activeTab === "buckets" && (
-              <section>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6">
+              <section className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                   {bucketsWithSpent.map((b) => {
                     const pct = b.budgeted > 0 ? Math.min(100, (b.spent / b.budgeted) * 100) : 0;
                     const remaining = round2(b.budgeted - b.spent);
+                    const isEditing = editingBucketId === b.id;
 
                     return (
-                      <div key={b.id} className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                        <div className="flex items-center justify-between mb-1">
-                          <h3 className="font-semibold text-slate-800">{b.name}</h3>
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${b.period === "weekly" ? "bg-sky-100 text-sky-700" : "bg-emerald-100 text-emerald-700"}`}>
-                            {b.period}{b.period === "weekly" ? ` (starts ${weekStartLabel})` : ""}
-                          </span>
-                        </div>
+                      <Card key={b.id} className="p-3 sm:p-4">
+                        {!isEditing ? (
+                          <>
+                            <div className="flex items-center justify-between mb-1">
+                              <h3 className="font-semibold text-slate-800">{b.name}</h3>
+                              <span className={`text-xs px-2 py-0.5 rounded-full border ${
+                                b.period === "weekly" ? "bg-sky-50 text-sky-700 border-sky-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              }`}>
+                                {b.period}
+                              </span>
+                            </div>
 
-                        <div className="flex items-center justify-between text-sm text-slate-600 mb-2">
-                          <div>Spent: <span className="font-medium text-slate-800">{currency(b.spent)}</span></div>
-                          <div>Budget: <span className="font-medium text-slate-800">{currency(b.budgeted)}</span></div>
-                        </div>
+                            <div className="flex items-center justify-between text-sm text-slate-600 mb-2">
+                              <div>Spent: <span className="font-medium text-slate-800">{currency(b.spent)}</span></div>
+                              <div>Budget: <span className="font-medium text-slate-800">{currency(b.budgeted)}</span></div>
+                            </div>
 
-                        <div className="w-full bg-slate-100 h-2 rounded overflow-hidden">
-                          <div className={`${getProgressColor(b.spent, b.budgeted)} h-2`} style={{ width: `${pct}%` }} />
-                        </div>
+                            <div className="w-full bg-slate-100 h-2 rounded overflow-hidden">
+                              <div className={`${getProgressColor(b.spent, b.budgeted)} h-2`} style={{ width: `${pct}%` }} />
+                            </div>
 
-                        <div className="mt-2 text-sm">
-                          <span className={`${remaining >= 0 ? "text-emerald-600" : "text-rose-600"} font-medium`}>{currency(remaining)}</span>
-                          <span className="text-slate-500"> {remaining >= 0 ? "left" : "over"}</span>
-                        </div>
+                            <div className="mt-2 text-sm">
+                              <span className={`${remaining >= 0 ? "text-emerald-700" : "text-rose-700"} font-semibold`}>
+                                {currency(remaining)}
+                              </span>
+                              <span className="text-slate-500"> {remaining >= 0 ? "left" : "over"}</span>
+                            </div>
 
-                        <div className="mt-3 flex items-center justify-between">
-                          <div className="text-xs text-slate-500">
-                            Monthly (estimate): <span className="font-semibold text-slate-700">{currency(monthlyFromBudget(b))}</span>
-                          </div>
-                          <div className="flex gap-2">
-                            <button onClick={() => resetBucket(b.id)} className="px-2 py-1 text-xs rounded bg-sky-100 text-sky-700 hover:bg-sky-200">Reset</button>
-                            <button onClick={() => deleteBucket(b.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
-                          </div>
-                        </div>
-                      </div>
+                            <div className="mt-3 flex items-center justify-between">
+                              <div className="text-xs text-slate-500">
+                                Monthly (estimate): <span className="font-semibold text-slate-700">{currency(monthlyFromBudget(b))}</span>
+                              </div>
+                              <div className="flex gap-2">
+                                <button onClick={() => startEditBucket(b)} className={buttonBase + " " + btnSoft}>Edit</button>
+                                <button onClick={() => resetBucket(b.id)} className={buttonBase + " bg-sky-100 hover:bg-sky-200 text-sky-700"}>Reset</button>
+                                <button onClick={() => deleteBucket(b.id)} className={buttonBase + " " + btnDanger}>Delete</button>
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <h3 className="font-extrabold text-slate-800">Edit bucket</h3>
+                              <Pill className="bg-slate-50 text-slate-700 border-slate-200">ID {b.id}</Pill>
+                            </div>
+
+                            <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                              <Field label="Name">
+                                <input
+                                  className={inputBase}
+                                  value={bucketDraft?.name ?? ""}
+                                  onChange={(e) => setBucketDraft(d => ({ ...d, name: e.target.value }))}
+                                />
+                              </Field>
+                              <Field label="Budgeted">
+                                <input
+                                  type="number"
+                                  className={inputBase}
+                                  value={bucketDraft?.budgeted ?? ""}
+                                  onChange={(e) => setBucketDraft(d => ({ ...d, budgeted: e.target.value }))}
+                                />
+                              </Field>
+                              <Field label="Period">
+                                <select
+                                  className={inputBase}
+                                  value={bucketDraft?.period ?? "monthly"}
+                                  onChange={(e) => setBucketDraft(d => ({ ...d, period: e.target.value }))}
+                                >
+                                  <option value="monthly">Monthly</option>
+                                  <option value="weekly">Weekly</option>
+                                </select>
+                              </Field>
+                            </div>
+
+                            <div className="mt-3 flex gap-2 justify-end">
+                              <button onClick={cancelEditBucket} className={buttonBase + " " + btnSoft}>Cancel</button>
+                              <button onClick={saveEditBucket} className={buttonBase + " " + btnPrimary}>Save</button>
+                            </div>
+                          </>
+                        )}
+                      </Card>
                     );
                   })}
                 </div>
 
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
+                <Card className="p-3 sm:p-4">
                   <h3 className="font-semibold text-slate-800 mb-3">Add Bucket</h3>
-                  <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={(e) => { e.preventDefault(); addBucket(); }}>
-                    <div className="flex flex-col gap-1 w-full max-w-[160px]">
-                      <label className="text-xs text-slate-600 font-medium">Name</label>
-                      <input className="border rounded px-2 py-1 text-sm w-full" placeholder="Name" value={newBucket.name} onChange={(e) => setNewBucket({ ...newBucket, name: e.target.value })} />
-                    </div>
-                    <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                      <label className="text-xs text-slate-600 font-medium">Amount</label>
-                      <input type="number" className="border rounded px-2 py-1 text-sm w-full" placeholder="Amount" value={newBucket.budgeted} onChange={(e) => setNewBucket({ ...newBucket, budgeted: e.target.value })} />
-                    </div>
-                    <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                      <label className="text-xs text-slate-600 font-medium">Period</label>
-                      <select className="border rounded px-2 py-1 text-sm w-full" value={newBucket.period} onChange={(e) => setNewBucket({ ...newBucket, period: e.target.value })}>
+                  <form className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end" onSubmit={(e) => { e.preventDefault(); addBucket(); }}>
+                    <Field label="Name">
+                      <input className={inputBase} placeholder="Name" value={newBucket.name} onChange={(e) => setNewBucket({ ...newBucket, name: e.target.value })} />
+                    </Field>
+                    <Field label="Amount">
+                      <input type="number" className={inputBase} placeholder="Amount" value={newBucket.budgeted} onChange={(e) => setNewBucket({ ...newBucket, budgeted: e.target.value })} />
+                    </Field>
+                    <Field label="Period">
+                      <select className={inputBase} value={newBucket.period} onChange={(e) => setNewBucket({ ...newBucket, period: e.target.value })}>
                         <option value="monthly">Monthly</option>
                         <option value="weekly">Weekly</option>
                       </select>
-                    </div>
-                    <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">
-                      Add
-                    </button>
+                    </Field>
+                    <button type="submit" className={buttonBase + " " + btnPrimary + " w-full"}>Add</button>
                   </form>
-                </div>
+                </Card>
               </section>
             )}
 
             {/* -------------------- INCOME -------------------- */}
             {activeTab === "income" && (
-              <section>
-                <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
+              <section className="space-y-4">
+                <Card className="p-3 sm:p-4">
                   <h3 className="font-semibold text-slate-800 mb-3">Income</h3>
                   <div className="space-y-3">
                     {recurringIncome
                       .slice()
                       .sort((a,b) => (String(nextSingleDueDate(a)) > String(nextSingleDueDate(b)) ? 1 : -1))
-                      .map((i) => (
-                      <div key={i.id} className="flex items-center justify-between p-3 rounded border border-slate-100 bg-slate-50">
-                        <div>
-                          <div className="font-medium text-slate-800 flex items-center gap-2 flex-wrap">
-                            <span>{i.name}</span>
-                            {isMissingAnchorIncome(i) && <WarnPill text="Missing anchor date" />}
-                            {isMissingDateOnceIncome(i) && <WarnPill text="Missing date" />}
-                            <span className="text-slate-500 font-normal">· {currency(i.amount)}</span>
+                      .map((i) => {
+                        const isEditing = editingIncomeId === i.id;
+                        return (
+                          <div key={i.id} className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                            {!isEditing ? (
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="font-semibold text-slate-800 flex items-center gap-2 flex-wrap">
+                                    <span className="truncate">{i.name}</span>
+                                    {isMissingAnchorIncome(i) && <WarnPill text="Missing anchor date" />}
+                                    {isMissingDateOnceIncome(i) && <WarnPill text="Missing date" />}
+                                    <span className="text-slate-500 font-normal">· {currency(i.amount)}</span>
+                                  </div>
+                                  <div className="text-xs text-slate-500">
+                                    {i.frequency === "once"
+                                      ? <>one-time · On: <span className="font-medium text-slate-700">{i.nextDate || "—"}</span></>
+                                      : <>{i.frequency} · Next: <span className="font-medium text-slate-700">{nextSingleDueDate(i)}</span></>
+                                    }
+                                  </div>
+                                </div>
+
+                                <div className="flex gap-2 shrink-0">
+                                  <button onClick={() => startEditIncome(i)} className={buttonBase + " " + btnSoft}>Edit</button>
+                                  <button onClick={() => deleteIncome(i.id)} className={buttonBase + " " + btnDanger}>Delete</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-center justify-between">
+                                  <div className="font-extrabold text-slate-800">Edit income</div>
+                                  <Pill className="bg-slate-50 text-slate-700 border-slate-200">ID {i.id}</Pill>
+                                </div>
+
+                                <div className="mt-3 grid grid-cols-1 sm:grid-cols-4 gap-3">
+                                  <Field label="Name">
+                                    <input className={inputBase} value={incomeDraft?.name ?? ""} onChange={(e)=>setIncomeDraft(d=>({ ...d, name: e.target.value }))} />
+                                  </Field>
+                                  <Field label="Amount">
+                                    <input type="number" className={inputBase} value={incomeDraft?.amount ?? ""} onChange={(e)=>setIncomeDraft(d=>({ ...d, amount: e.target.value }))} />
+                                  </Field>
+                                  <Field label="Frequency">
+                                    <select className={inputBase} value={incomeDraft?.frequency ?? "monthly"} onChange={(e)=>setIncomeDraft(d=>({ ...d, frequency: e.target.value }))}>
+                                      <option value="monthly">Monthly</option>
+                                      <option value="weekly">Weekly</option>
+                                      <option value="biweekly">Bi-weekly</option>
+                                      <option value="once">One-time</option>
+                                    </select>
+                                  </Field>
+                                  <Field label={(incomeDraft?.frequency === "once") ? "Date" : "Anchor / Next Date"}>
+                                    <input type="date" className={inputBase} value={incomeDraft?.nextDate ?? ""} onChange={(e)=>setIncomeDraft(d=>({ ...d, nextDate: e.target.value }))} />
+                                  </Field>
+                                </div>
+
+                                <div className="mt-3 flex gap-2 justify-end">
+                                  <button onClick={cancelEditIncome} className={buttonBase + " " + btnSoft}>Cancel</button>
+                                  <button onClick={saveEditIncome} className={buttonBase + " " + btnPrimary}>Save</button>
+                                </div>
+                              </>
+                            )}
                           </div>
-                          <div className="text-xs text-slate-500">
-                            {i.frequency === "once"
-                              ? <>one-time · On: <span className="font-medium text-slate-700">{i.nextDate || "—"}</span></>
-                              : <>{i.frequency} · Next: <span className="font-medium text-slate-700">{nextSingleDueDate(i)}</span></>
-                            }
-                          </div>
-                        </div>
-                        <button onClick={() => deleteIncome(i.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
-                      </div>
-                    ))}
+                        );
+                      })}
                   </div>
+                </Card>
 
-                  <hr className="my-4"/>
-
+                <Card className="p-3 sm:p-4">
                   <h3 className="font-semibold text-slate-800 mb-3">Add Income</h3>
-                  <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={(e) => { e.preventDefault(); addIncome(); }}>
-                    <div className="flex flex-col gap-1 w-full max-w-[160px]">
-                      <label className="text-xs text-slate-600 font-medium">Name</label>
-                      <input className="border rounded px-2 py-1 text-sm w-full" value={newIncome.name} onChange={(e) => setNewIncome({ ...newIncome, name: e.target.value })} />
-                    </div>
-                    <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                      <label className="text-xs text-slate-600 font-medium">Amount</label>
-                      <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newIncome.amount} onChange={(e) => setNewIncome({ ...newIncome, amount: e.target.value })} />
-                    </div>
-                    <div className="flex flex-col gap-1 w-full max-w-[130px]">
-                      <label className="text-xs text-slate-600 font-medium">Frequency</label>
-                      <select className="border rounded px-2 py-1 text-sm w-full" value={newIncome.frequency} onChange={(e) => setNewIncome({ ...newIncome, frequency: e.target.value })}>
+                  <form className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end" onSubmit={(e) => { e.preventDefault(); addIncome(); }}>
+                    <Field label="Name">
+                      <input className={inputBase} value={newIncome.name} onChange={(e) => setNewIncome({ ...newIncome, name: e.target.value })} />
+                    </Field>
+                    <Field label="Amount">
+                      <input type="number" className={inputBase} value={newIncome.amount} onChange={(e) => setNewIncome({ ...newIncome, amount: e.target.value })} />
+                    </Field>
+                    <Field label="Frequency">
+                      <select className={inputBase} value={newIncome.frequency} onChange={(e) => setNewIncome({ ...newIncome, frequency: e.target.value })}>
                         <option value="monthly">Monthly</option>
                         <option value="weekly">Weekly</option>
                         <option value="biweekly">Bi-weekly</option>
                         <option value="once">One-time</option>
                       </select>
-                    </div>
-                    <div className="flex flex-col gap-1 w-full max-w-[150px]">
-                      <label className="text-xs text-slate-600 font-medium">
-                        {newIncome.frequency === "once" ? "Date" : "Anchor / Next Date"}
-                      </label>
-                      <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newIncome.nextDate} onChange={(e) => setNewIncome({ ...newIncome, nextDate: e.target.value })} />
-                    </div>
-                    <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">
-                      Add
-                    </button>
+                    </Field>
+                    <Field label={newIncome.frequency === "once" ? "Date" : "Anchor / Next Date"}>
+                      <input type="date" className={inputBase} value={newIncome.nextDate} onChange={(e) => setNewIncome({ ...newIncome, nextDate: e.target.value })} />
+                    </Field>
+                    <button type="submit" className={buttonBase + " " + btnPrimary + " w-full"}>Add</button>
                   </form>
-                </div>
+                </Card>
               </section>
             )}
 
             {/* -------------------- BILLS -------------------- */}
             {activeTab === "bills" && (
-              <section>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h3 className="font-semibold text-slate-800 mb-1">Bills</h3>
-                        <div className="text-xs text-slate-500">
-                          This month due (actual): <span className="font-semibold text-slate-700">{currency(totalBillsDueThisMonth)}</span>
-                        </div>
+              <section className="space-y-4">
+                <Card className="p-3 sm:p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="font-semibold text-slate-800 mb-1">Bills</h3>
+                      <div className="text-xs text-slate-500">
+                        This month due (actual): <span className="font-semibold text-slate-700">{currency(totalBillsDueThisMonth)}</span>
                       </div>
-                      {usedFallbackPaydays && (
-                        <Pill className="bg-amber-50 text-amber-800 border-amber-200">
-                          ⚠️ 4-paycheck estimate
-                        </Pill>
-                      )}
                     </div>
-
-                    <div className="mt-3 p-3 rounded-xl border border-indigo-100 bg-indigo-50">
-                      <div className="text-xs uppercase tracking-wide text-indigo-700 font-semibold">
-                        Set aside per paycheck
-                      </div>
-                      <div className="mt-1 text-3xl font-extrabold text-indigo-800">
-                        {currency(perPaycheckSetAsideForBills)}
-                      </div>
-                      <div className="text-xs text-indigo-700 mt-1">
-                        {currency(totalBillsDueThisMonth)} ÷ {paydaysThisMonth} paychecks
-                      </div>
-                      <div className="text-xs text-indigo-700 mt-1">
-                        Paychecks counted: <span className="font-semibold">{paydaysThisMonth}</span>
-                        {mainPaycheck ? (
-                          <> · Main paycheck: <span className="font-semibold">{mainPaycheck.name}</span> · Next: {nextSingleDueDate(mainPaycheck)}</>
-                        ) : null}
-                      </div>
-                      {usedFallbackPaydays && (
-                        <div className="text-xs text-amber-800 mt-2">
-                          Fix: set an anchor date for your main weekly/biweekly paycheck in the Income tab.
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="mt-4 space-y-3">
-                      {recurringBills
-                        .slice()
-                        .sort((a, b) => (String(nextSingleDueDate(a)) > String(nextSingleDueDate(b)) ? 1 : -1))
-                        .map((b) => (
-                          <div key={b.id} className="flex items-center justify-between p-3 rounded border border-slate-100 bg-slate-50">
-                            <div>
-                              <div className="font-medium text-slate-800 flex items-center gap-2 flex-wrap">
-                                <span>{b.name}</span>
-                                {isMissingAnchorBill(b) && <WarnPill text="Missing anchor date" />}
-                                <span className="text-slate-500 font-normal">· {currency(b.amount)}</span>
-                              </div>
-                              <div className="text-xs text-slate-500">
-                                {b.frequency} · Next: <span className="font-medium text-slate-700">{nextSingleDueDate(b)}</span>
-                              </div>
-                            </div>
-                            <button onClick={() => deleteBill(b.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
-                          </div>
-                        ))}
-                    </div>
-                  </div>
-
-                  <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
-                    <h3 className="font-semibold text-slate-800 mb-3">Add Bill</h3>
-
-                    <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={(e) => { e.preventDefault(); addBill(); }}>
-                      <div className="flex flex-col gap-1 w-full max-w-[160px]">
-                        <label className="text-xs text-slate-600 font-medium">Name</label>
-                        <input className="border rounded px-2 py-1 text-sm w-full" value={newBill.name} onChange={(e) => setNewBill({ ...newBill, name: e.target.value })} />
-                      </div>
-
-                      <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                        <label className="text-xs text-slate-600 font-medium">Amount</label>
-                        <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newBill.amount} onChange={(e) => setNewBill({ ...newBill, amount: e.target.value })} />
-                      </div>
-
-                      <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                        <label className="text-xs text-slate-600 font-medium">Frequency</label>
-                        <select className="border rounded px-2 py-1 text-sm w-full" value={newBill.frequency} onChange={(e) => setNewBill({ ...newBill, frequency: e.target.value })}>
-                          <option value="monthly">Monthly</option>
-                          <option value="weekly">Weekly</option>
-                          <option value="yearly">Yearly</option>
-                        </select>
-                      </div>
-
-                      {newBill.frequency === "monthly" && (
-                        <div className="flex flex-col gap-1 w-full max-w-[120px]">
-                          <label className="text-xs text-slate-600 font-medium">Due day (1-28)</label>
-                          <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newBill.dueDay} onChange={(e) => setNewBill({ ...newBill, dueDay: e.target.value })} />
-                        </div>
-                      )}
-
-                      {newBill.frequency === "weekly" && (
-                        <div className="flex flex-col gap-1 w-full max-w-[150px]">
-                          <label className="text-xs text-slate-600 font-medium">Anchor Date</label>
-                          <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newBill.nextDate} onChange={(e) => setNewBill({ ...newBill, nextDate: e.target.value })} />
-                        </div>
-                      )}
-
-                      {newBill.frequency === "yearly" && (
-                        <>
-                          <div className="flex flex-col gap-1 w-full max-w-[110px]">
-                            <label className="text-xs text-slate-600 font-medium">Due month (1-12)</label>
-                            <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newBill.dueMonth} onChange={(e) => setNewBill({ ...newBill, dueMonth: e.target.value })} />
-                          </div>
-                          <div className="flex flex-col gap-1 w-full max-w-[110px]">
-                            <label className="text-xs text-slate-600 font-medium">Due day (1-28)</label>
-                            <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newBill.dueDay} onChange={(e) => setNewBill({ ...newBill, dueDay: e.target.value })} />
-                          </div>
-                        </>
-                      )}
-
-                      <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">
-                        Add
-                      </button>
-                    </form>
-
-                    {newBill.frequency === "weekly" && !parseYMDLocal(newBill.nextDate) && (
-                      <div className="mt-2 text-xs text-amber-800">
-                        ⚠️ Weekly bills need an anchor date to schedule correctly.
-                      </div>
+                    {usedFallbackPaydays && (
+                      <Pill className="bg-amber-50 text-amber-800 border-amber-200">⚠️ estimate</Pill>
                     )}
                   </div>
-                </div>
+
+                  <div className="mt-3 p-3 rounded-xl border border-indigo-100 bg-indigo-50">
+                    <div className="text-xs uppercase tracking-wide text-indigo-700 font-semibold">
+                      Set aside per paycheck
+                    </div>
+                    <div className="mt-1 text-3xl font-extrabold text-indigo-800">
+                      {currency(perPaycheckSetAsideForBills)}
+                    </div>
+                    <div className="text-xs text-indigo-700 mt-1">
+                      {currency(totalBillsDueThisMonth)} ÷ {paydaysThisMonth} paychecks
+                    </div>
+                    {mainPaycheck ? (
+                      <div className="text-xs text-indigo-700 mt-1">
+                        Main paycheck: <span className="font-semibold">{mainPaycheck.name}</span> · Next: {nextSingleDueDate(mainPaycheck)}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-4 space-y-3">
+                    {recurringBills
+                      .slice()
+                      .sort((a, b) => (String(nextSingleDueDate(a)) > String(nextSingleDueDate(b)) ? 1 : -1))
+                      .map((b) => {
+                        const isEditing = editingBillId === b.id;
+                        return (
+                          <div key={b.id} className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                            {!isEditing ? (
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="font-semibold text-slate-800 flex items-center gap-2 flex-wrap">
+                                    <span className="truncate">{b.name}</span>
+                                    {isMissingAnchorBill(b) && <WarnPill text="Missing anchor date" />}
+                                    <span className="text-slate-500 font-normal">· {currency(b.amount)}</span>
+                                  </div>
+                                  <div className="text-xs text-slate-500">
+                                    {b.frequency} · Next: <span className="font-medium text-slate-700">{nextSingleDueDate(b)}</span>
+                                  </div>
+                                </div>
+
+                                <div className="flex gap-2 shrink-0">
+                                  <button onClick={() => startEditBill(b)} className={buttonBase + " " + btnSoft}>Edit</button>
+                                  <button onClick={() => deleteBill(b.id)} className={buttonBase + " " + btnDanger}>Delete</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-center justify-between">
+                                  <div className="font-extrabold text-slate-800">Edit bill</div>
+                                  <Pill className="bg-slate-50 text-slate-700 border-slate-200">ID {b.id}</Pill>
+                                </div>
+
+                                <div className="mt-3 grid grid-cols-1 sm:grid-cols-4 gap-3">
+                                  <Field label="Name">
+                                    <input className={inputBase} value={billDraft?.name ?? ""} onChange={(e)=>setBillDraft(d=>({ ...d, name: e.target.value }))} />
+                                  </Field>
+                                  <Field label="Amount">
+                                    <input type="number" className={inputBase} value={billDraft?.amount ?? ""} onChange={(e)=>setBillDraft(d=>({ ...d, amount: e.target.value }))} />
+                                  </Field>
+                                  <Field label="Frequency">
+                                    <select className={inputBase} value={billDraft?.frequency ?? "monthly"} onChange={(e)=>setBillDraft(d=>({ ...d, frequency: e.target.value }))}>
+                                      <option value="monthly">Monthly</option>
+                                      <option value="weekly">Weekly</option>
+                                      <option value="yearly">Yearly</option>
+                                    </select>
+                                  </Field>
+
+                                  {billDraft?.frequency === "monthly" && (
+                                    <Field label="Due day (1-28)">
+                                      <input type="number" className={inputBase} value={billDraft?.dueDay ?? ""} onChange={(e)=>setBillDraft(d=>({ ...d, dueDay: e.target.value }))} />
+                                    </Field>
+                                  )}
+
+                                  {billDraft?.frequency === "weekly" && (
+                                    <Field label="Anchor date">
+                                      <input type="date" className={inputBase} value={billDraft?.nextDate ?? ""} onChange={(e)=>setBillDraft(d=>({ ...d, nextDate: e.target.value }))} />
+                                    </Field>
+                                  )}
+
+                                  {billDraft?.frequency === "yearly" && (
+                                    <>
+                                      <Field label="Due month (1-12)">
+                                        <input type="number" className={inputBase} value={billDraft?.dueMonth ?? ""} onChange={(e)=>setBillDraft(d=>({ ...d, dueMonth: e.target.value }))} />
+                                      </Field>
+                                      <Field label="Due day (1-28)">
+                                        <input type="number" className={inputBase} value={billDraft?.dueDay ?? ""} onChange={(e)=>setBillDraft(d=>({ ...d, dueDay: e.target.value }))} />
+                                      </Field>
+                                    </>
+                                  )}
+                                </div>
+
+                                {billDraft?.frequency === "weekly" && !parseYMDLocal(billDraft?.nextDate) && (
+                                  <div className="mt-2 text-xs text-amber-800">
+                                    ⚠️ Weekly bills need an anchor date to schedule correctly.
+                                  </div>
+                                )}
+
+                                <div className="mt-3 flex gap-2 justify-end">
+                                  <button onClick={cancelEditBill} className={buttonBase + " " + btnSoft}>Cancel</button>
+                                  <button onClick={saveEditBill} className={buttonBase + " " + btnPrimary}>Save</button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                </Card>
+
+                <Card className="p-3 sm:p-4">
+                  <h3 className="font-semibold text-slate-800 mb-3">Add Bill</h3>
+                  <form className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end" onSubmit={(e) => { e.preventDefault(); addBill(); }}>
+                    <Field label="Name">
+                      <input className={inputBase} value={newBill.name} onChange={(e) => setNewBill({ ...newBill, name: e.target.value })} />
+                    </Field>
+
+                    <Field label="Amount">
+                      <input type="number" className={inputBase} value={newBill.amount} onChange={(e) => setNewBill({ ...newBill, amount: e.target.value })} />
+                    </Field>
+
+                    <Field label="Frequency">
+                      <select className={inputBase} value={newBill.frequency} onChange={(e) => setNewBill({ ...newBill, frequency: e.target.value })}>
+                        <option value="monthly">Monthly</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="yearly">Yearly</option>
+                      </select>
+                    </Field>
+
+                    {newBill.frequency === "monthly" && (
+                      <Field label="Due day (1-28)">
+                        <input type="number" className={inputBase} value={newBill.dueDay} onChange={(e) => setNewBill({ ...newBill, dueDay: e.target.value })} />
+                      </Field>
+                    )}
+
+                    {newBill.frequency === "weekly" && (
+                      <Field label="Anchor date">
+                        <input type="date" className={inputBase} value={newBill.nextDate} onChange={(e) => setNewBill({ ...newBill, nextDate: e.target.value })} />
+                      </Field>
+                    )}
+
+                    {newBill.frequency === "yearly" && (
+                      <>
+                        <Field label="Due month (1-12)">
+                          <input type="number" className={inputBase} value={newBill.dueMonth} onChange={(e) => setNewBill({ ...newBill, dueMonth: e.target.value })} />
+                        </Field>
+                        <Field label="Due day (1-28)">
+                          <input type="number" className={inputBase} value={newBill.dueDay} onChange={(e) => setNewBill({ ...newBill, dueDay: e.target.value })} />
+                        </Field>
+                      </>
+                    )}
+
+                    <button type="submit" className={buttonBase + " " + btnPrimary + " w-full"}>Add</button>
+                  </form>
+
+                  {newBill.frequency === "weekly" && !parseYMDLocal(newBill.nextDate) && (
+                    <div className="mt-2 text-xs text-amber-800">
+                      ⚠️ Weekly bills need an anchor date to schedule correctly.
+                    </div>
+                  )}
+                </Card>
               </section>
             )}
 
             {/* -------------------- TRANSACTIONS -------------------- */}
             {activeTab === "transactions" && (
-              <section>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-                  <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
+              <section className="space-y-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <Card className="p-3 sm:p-4">
                     <h3 className="font-semibold text-slate-800 mb-3">Transactions</h3>
                     <div className="space-y-3">
                       {transactions
@@ -1337,43 +1573,40 @@
                           return (
                             <div key={t.id} className="flex items-center justify-between p-3 rounded border border-slate-100 bg-slate-50">
                               <div>
-                                <div className="font-medium text-slate-800">{t.description} <span className="text-slate-500 font-normal">· {currency(t.amount)}</span></div>
+                                <div className="font-medium text-slate-800">
+                                  {t.description}
+                                  <span className="text-slate-500 font-normal"> · {currency(t.amount)}</span>
+                                </div>
                                 <div className="text-xs text-slate-500">{t.date} · {bucketName}</div>
                               </div>
-                              <button onClick={() => deleteTransaction(t.id)} className="px-2 py-1 text-xs rounded bg-rose-100 text-rose-700 hover:bg-rose-200">Delete</button>
+                              <button onClick={() => deleteTransaction(t.id)} className={buttonBase + " " + btnDanger}>Delete</button>
                             </div>
                           );
                         })}
                     </div>
-                  </div>
+                  </Card>
 
-                  <div className="bg-white rounded-xl shadow p-3 sm:p-4 border border-slate-100">
+                  <Card className="p-3 sm:p-4">
                     <h3 className="font-semibold text-slate-800 mb-3">Add Transaction</h3>
-                    <form className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2" onSubmit={(e) => { e.preventDefault(); addTransaction(); }}>
-                      <div className="flex flex-col gap-1 w-full max-w-[160px]">
-                        <label className="text-xs text-slate-600 font-medium">Bucket</label>
-                        <select className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.bucketId} onChange={(e) => setNewTransaction({ ...newTransaction, bucketId: e.target.value })}>
+                    <form className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end" onSubmit={(e) => { e.preventDefault(); addTransaction(); }}>
+                      <Field label="Bucket">
+                        <select className={inputBase} value={newTransaction.bucketId} onChange={(e) => setNewTransaction({ ...newTransaction, bucketId: e.target.value })}>
                           <option value="">Select Bucket</option>
                           {buckets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                         </select>
-                      </div>
-                      <div className="flex flex-col gap-1 w-full max-w-[110px]">
-                        <label className="text-xs text-slate-600 font-medium">Amount</label>
-                        <input type="number" className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.amount} onChange={(e) => setNewTransaction({ ...newTransaction, amount: e.target.value })} />
-                      </div>
-                      <div className="flex flex-col gap-1 w-full max-w-[220px]">
-                        <label className="text-xs text-slate-600 font-medium">Description</label>
-                        <input className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.description} onChange={(e) => setNewTransaction({ ...newTransaction, description: e.target.value })} />
-                      </div>
-                      <div className="flex flex-col gap-1 w-full max-w-[150px]">
-                        <label className="text-xs text-slate-600 font-medium">Date</label>
-                        <input type="date" className="border rounded px-2 py-1 text-sm w-full" value={newTransaction.date} onChange={(e) => setNewTransaction({ ...newTransaction, date: e.target.value })} />
-                      </div>
-                      <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-semibold shadow-sm text-sm w-full sm:w-auto transition-colors duration-150">
-                        Add
-                      </button>
+                      </Field>
+                      <Field label="Amount">
+                        <input type="number" className={inputBase} value={newTransaction.amount} onChange={(e) => setNewTransaction({ ...newTransaction, amount: e.target.value })} />
+                      </Field>
+                      <Field label="Description">
+                        <input className={inputBase} value={newTransaction.description} onChange={(e) => setNewTransaction({ ...newTransaction, description: e.target.value })} />
+                      </Field>
+                      <Field label="Date">
+                        <input type="date" className={inputBase} value={newTransaction.date} onChange={(e) => setNewTransaction({ ...newTransaction, date: e.target.value })} />
+                      </Field>
+                      <button type="submit" className={buttonBase + " " + btnPrimary + " w-full"}>Add</button>
                     </form>
-                  </div>
+                  </Card>
                 </div>
               </section>
             )}
