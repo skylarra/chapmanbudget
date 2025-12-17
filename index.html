@@ -264,6 +264,7 @@
       // ---------------- Occurrence counting (month-accurate paydays) ----------------
       const isInRange = (d, start, end) => d >= start && d <= end;
 
+      // ✅ FIX: counts ALL occurrences in selected month (past + future within month)
       const countOccurrencesInSelectedMonth = (item) => {
         const start = new Date(monthStart); start.setHours(0,0,0,0);
         const end = new Date(monthEnd); end.setHours(23,59,59,999);
@@ -274,6 +275,12 @@
           if (!anchor) return 0;
 
           let d = new Date(anchor); d.setHours(0,0,0,0);
+
+          // Move anchor backward if it lands after the month
+          while (d > end) d.setDate(d.getDate() - step);
+
+          // Walk back so we don't miss early-in-month occurrences
+          while (d > start) d.setDate(d.getDate() - step);
           while (d < start) d.setDate(d.getDate() + step);
 
           let count = 0;
@@ -313,7 +320,6 @@
 
       const monthlyFromBill = (b) => {
         if (b.frequency === "weekly") {
-          // expects b.nextDate anchor
           const count = countOccurrencesInSelectedMonth({ ...b, frequency: "weekly" });
           return round2((b.amount || 0) * count);
         }
@@ -335,7 +341,7 @@
 
         const score = (i) => {
           const amt = Number(i.amount) || 0;
-          if (i.frequency === "weekly" || i.frequency === "biweekly") return monthlyFromIncome(i); // month-accurate
+          if (i.frequency === "weekly" || i.frequency === "biweekly") return monthlyFromIncome(i);
           if (i.frequency === "monthly") return amt;
           return 0;
         };
@@ -387,10 +393,19 @@
           return out;
         }
 
+        // ✅ FIX: weekly/biweekly should NOT miss earlier-in-range occurrences
         if (item.frequency === "weekly" || item.frequency === "biweekly") {
           const step = item.frequency === "weekly" ? 7 : 14;
-          const anchor = parseYMDLocal(item.nextDate) || floorLocalToday();
+          const anchor = parseYMDLocal(item.nextDate);
+          if (!anchor) return out;
+
           let d = new Date(anchor); d.setHours(0,0,0,0);
+
+          // Move backward into vicinity so we don't miss early range occurrences
+          while (d > end) d = addDays(d, -step);
+          while (d > start) d = addDays(d, -step);
+
+          // Step forward and collect in-range
           while (d < start) d = addDays(d, step);
           while (d <= end) {
             out.push({ type: kind, id: `${kind}-${item.id}-${fmtDate(d)}`, name, amount, frequency: item.frequency, date: fmtDate(d) });
@@ -518,6 +533,12 @@
           </div>
         );
       };
+
+      const Pill = ({ children, className="" }) => (
+        <span className={`inline-flex items-center text-xs px-2 py-0.5 rounded-full border ${className}`}>
+          {children}
+        </span>
+      );
 
       // ---------------- CRUD: Transactions ----------------
       const todayStr = fmtDate(new Date());
@@ -762,52 +783,90 @@
       const monthTxTotal = round2(monthTransactions.reduce((s, t) => s + (Number(t.amount) || 0), 0));
       const monthTxCount = monthTransactions.length;
 
-      // ---------------- UI helpers ----------------
-      const Pill = ({ children, className="" }) => (
-        <span className={`inline-flex items-center text-xs px-2 py-0.5 rounded-full border ${className}`}>
-          {children}
-        </span>
-      );
-
       // ---------------- Render ----------------
       return (
         <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-sky-50 to-emerald-50">
           <div className="max-w-6xl mx-auto p-2 sm:p-4 md:p-6">
 
+            {/* -------------------- HEADER (cleaner) -------------------- */}
             <header className="mb-4 sm:mb-6">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div>
-                  <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800">💰 Budget Buckets</h1>
+              <div className="bg-white/70 backdrop-blur rounded-2xl border border-slate-100 shadow-sm p-3 sm:p-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div className="min-w-0">
+                    <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800">💰 Budget Buckets</h1>
 
-                  <div className="text-sm text-slate-600 mt-1 flex flex-wrap items-center gap-2">
-                    <span>
-                      Month: <span className="font-semibold text-slate-800">
-                        {new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-                      </span>
-                    </span>
-                    <span className="text-slate-300">•</span>
-                    <span>
-                      Weekly start: <span className="font-semibold text-slate-800">{weekStartLabel}</span>
-                    </span>
-                    <span className="text-slate-300">•</span>
-                    <span>
-                      Paychecks counted: <span className="font-semibold text-slate-800">{paydaysThisMonth}</span>
-                    </span>
-
-                    {usedFallbackPaydays && (
-                      <Pill className="bg-amber-50 text-amber-800 border-amber-200">
-                        ⚠️ Using 4-paycheck estimate
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <Pill className="bg-slate-50 text-slate-700 border-slate-200">
+                        Month: <span className="ml-1 font-semibold text-slate-900">
+                          {new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+                        </span>
                       </Pill>
-                    )}
+
+                      <Pill className="bg-sky-50 text-sky-700 border-sky-200">
+                        Weekly start: <span className="ml-1 font-semibold text-slate-900">{weekStartLabel}</span>
+                      </Pill>
+
+                      <Pill className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                        Paychecks in month: <span className="ml-1 font-semibold text-slate-900">{paydaysThisMonth}</span>
+                      </Pill>
+
+                      {usedFallbackPaydays && (
+                        <Pill className="bg-amber-50 text-amber-800 border-amber-200">
+                          ⚠️ Using 4-paycheck estimate
+                        </Pill>
+                      )}
+                    </div>
                   </div>
 
-                  {mainPaycheck && (
-                    <div className="text-xs text-slate-500 mt-1">
-                      Main paycheck: <span className="font-semibold text-slate-700">{mainPaycheck.name}</span>
-                      {" "}({mainPaycheck.frequency}{mainPaycheck.frequency !== "monthly" ? ", anchor " + (mainPaycheck.nextDate || "—") : ""})
-                      {" "}· Next: <span className="font-semibold text-slate-700">{nextSingleDueDate(mainPaycheck)}</span>
-                    </div>
-                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={selectedMonth}
+                      onChange={(e) => setSelectedMonth(parseInt(e.target.value, 10))}
+                      className="border rounded-lg px-2 py-1 bg-white shadow-sm text-sm min-w-[120px]"
+                    >
+                      {Array.from({ length: 12 }, (_, i) =>
+                        <option key={i} value={i}>
+                          {new Date(2000, i).toLocaleString("en-US", { month: "long" })}
+                        </option>
+                      )}
+                    </select>
+
+                    <input
+                      type="number"
+                      value={selectedYear}
+                      onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
+                      className="border rounded-lg px-2 py-1 w-24 bg-white shadow-sm text-sm"
+                    />
+                  </div>
+                </div>
+
+                {/* Collapsible: tools + warnings */}
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-sm text-slate-600 select-none">
+                    More tools & details
+                  </summary>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={downloadMonthlySummary}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded shadow text-sm"
+                    >
+                      Download Summary
+                    </button>
+
+                    <label className="text-xs text-slate-600 font-medium cursor-pointer bg-white px-3 py-1 rounded shadow-sm border border-slate-200 hover:bg-slate-50">
+                      Upload Summary
+                      <input type="file" accept=".txt" onChange={handleSummaryUpload} className="hidden" />
+                    </label>
+
+                    {mainPaycheck && (
+                      <div className="text-xs text-slate-500">
+                        Main paycheck: <span className="font-semibold text-slate-700">{mainPaycheck.name}</span>
+                        {" "}({mainPaycheck.frequency}{mainPaycheck.frequency !== "monthly" ? ", anchor " + (mainPaycheck.nextDate || "—") : ""})
+                        {" "}· Next: <span className="font-semibold text-slate-700">{nextSingleDueDate(mainPaycheck)}</span>
+                      </div>
+                    )}
+                  </div>
 
                   {hasAnyAnchorWarnings && (
                     <div className="mt-3 p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-900">
@@ -825,40 +884,7 @@
                       </ul>
                     </div>
                   )}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    value={selectedMonth}
-                    onChange={(e) => setSelectedMonth(parseInt(e.target.value, 10))}
-                    className="border rounded px-2 py-1 bg-white shadow-sm text-sm min-w-[120px]"
-                  >
-                    {Array.from({ length: 12 }, (_, i) =>
-                      <option key={i} value={i}>
-                        {new Date(2000, i).toLocaleString("en-US", { month: "long" })}
-                      </option>
-                    )}
-                  </select>
-
-                  <input
-                    type="number"
-                    value={selectedYear}
-                    onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
-                    className="border rounded px-2 py-1 w-24 bg-white shadow-sm text-sm"
-                  />
-
-                  <button
-                    onClick={downloadMonthlySummary}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded shadow text-sm"
-                  >
-                    Download Summary
-                  </button>
-
-                  <label className="text-xs text-slate-600 font-medium cursor-pointer bg-white px-3 py-1 rounded shadow-sm border border-slate-200 hover:bg-slate-50">
-                    Upload Summary
-                    <input type="file" accept=".txt" onChange={handleSummaryUpload} className="hidden" />
-                  </label>
-                </div>
+                </details>
               </div>
             </header>
 
@@ -883,13 +909,13 @@
                   <StatCard
                     label="Income (this month)"
                     value={currency(totalMonthlyIncome)}
-                    sub="Weekly/biweekly counts only actual paydays in this month"
+                    sub="Weekly/biweekly counts ALL paydays inside this month"
                     tone="emerald"
                   />
                   <StatCard
                     label="Bills (monthly est.)"
                     value={`-${currency(totalMonthlyBills).slice(1)}`}
-                    sub="Weekly bills count only occurrences in this month (yearly is prorated)"
+                    sub="Weekly bills count occurrences in this month (yearly is prorated)"
                     tone="rose"
                   />
                   <StatCard
