@@ -54,6 +54,15 @@
         return fallback;
       };
 
+      // Safe money parsing: parse only on save/add
+      const parseMoney = (s) => {
+        const cleaned = String(s ?? "")
+          .replace(/[^0-9.\-]/g, "")
+          .replace(/(?!^)-/g, ""); // only allow leading minus
+        const val = parseFloat(cleaned);
+        return Number.isFinite(val) ? round2(val) : 0;
+      };
+
       // ---------------- Initial State ----------------
       const [buckets, setBuckets] = React.useState(
         loadState("buckets", [
@@ -262,7 +271,6 @@
       // ---------------- Occurrence counting (month-accurate paydays) ----------------
       const isInRange = (d, start, end) => d >= start && d <= end;
 
-      // ✅ Counts ALL occurrences inside the selected month (past + future)
       const countOccurrencesInSelectedMonth = (item) => {
         const start = new Date(monthStart); start.setHours(0,0,0,0);
         const end = new Date(monthEnd); end.setHours(23,59,59,999);
@@ -274,9 +282,7 @@
 
           let d = new Date(anchor); d.setHours(0,0,0,0);
 
-          // Walk backwards until we’re at/before monthStart
           while (d > start) d.setDate(d.getDate() - step);
-          // Then forward into the month
           while (d < start) d.setDate(d.getDate() + step);
 
           let count = 0;
@@ -511,52 +517,75 @@
       );
 
       const inputBase = "border rounded-lg px-2 py-1 text-sm w-full bg-white shadow-sm";
+      const moneyInputBase = inputBase + " tabular-nums";
       const buttonBase = "px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm";
       const btnPrimary = "bg-indigo-600 hover:bg-indigo-700 text-white";
       const btnSoft = "bg-slate-100 hover:bg-slate-200 text-slate-700";
       const btnDanger = "bg-rose-100 hover:bg-rose-200 text-rose-700";
 
-      // ---------------- CRUD: Transactions ----------------
+      // =====================================================================
+      // ✅ FIX: Uncontrolled refs for ALL typing fields (prevents iOS focus loss)
+      // =====================================================================
       const todayStr = fmtDate(new Date());
-      const [newTransaction, setNewTransaction] = React.useState({
-        bucketId: "",
-        amount: "",
-        description: "",
-        date: todayStr
-      });
 
+      const bucketDraftRef = React.useRef(null);
+      const incomeDraftRef = React.useRef(null);
+      const billDraftRef = React.useRef(null);
+
+      const newBucketRef = React.useRef({ name: "", budgeted: "", period: "monthly" });
+      const newIncomeRef = React.useRef({ name: "", amount: "", frequency: "monthly", nextDate: "" });
+      const newBillRef = React.useRef({ name: "", amount: "", frequency: "monthly", dueDay: "", dueMonth: "", nextDate: "" });
+      const newTxRef = React.useRef({ bucketId: "", amount: "", description: "", date: todayStr });
+
+      const setRefField = (ref, key, value) => {
+        ref.current = { ...(ref.current || {}), [key]: value };
+      };
+
+      // Keys to force-reset uncontrolled forms after add/save/cancel
+      const [bucketFormKey, setBucketFormKey] = React.useState(1);
+      const [incomeFormKey, setIncomeFormKey] = React.useState(1);
+      const [billFormKey, setBillFormKey] = React.useState(1);
+      const [txFormKey, setTxFormKey] = React.useState(1);
+
+      const [editKey, setEditKey] = React.useState(1);
+
+      // ---------------- CRUD: Transactions ----------------
       const addTransaction = () => {
-        if (!newTransaction.bucketId || !newTransaction.amount || !newTransaction.description) return;
+        const d = newTxRef.current || {};
+        if (!d.bucketId || !String(d.amount || "").trim() || !String(d.description || "").trim()) return;
 
-        const bucketIdNum = Number(newTransaction.bucketId);
+        const bucketIdNum = Number(d.bucketId);
         const tx = {
           id: Date.now(),
           bucketId: bucketIdNum,
-          amount: round2(parseFloat(newTransaction.amount)),
-          description: String(newTransaction.description).trim(),
-          date: newTransaction.date || todayStr,
+          amount: parseMoney(d.amount),
+          description: String(d.description).trim(),
+          date: d.date || todayStr,
         };
 
         setTransactions((prev) => [...prev, tx]);
-        setNewTransaction({ bucketId: "", amount: "", description: "", date: todayStr });
+        newTxRef.current = { bucketId: "", amount: "", description: "", date: todayStr };
+        setTxFormKey(k => k + 1);
       };
 
       const deleteTransaction = (id) => setTransactions((prev) => prev.filter((t) => t.id !== id));
 
       // ---------------- CRUD: Buckets ----------------
-      const [newBucket, setNewBucket] = React.useState({ name: "", budgeted: "", period: "monthly" });
-
       const addBucket = () => {
-        if (!newBucket.name || !newBucket.budgeted) return;
+        const d = newBucketRef.current || {};
+        if (!String(d.name || "").trim() || !String(d.budgeted || "").trim()) return;
+
         const b = {
           id: Date.now(),
-          name: newBucket.name.trim(),
-          budgeted: round2(parseFloat(newBucket.budgeted)),
+          name: String(d.name).trim(),
+          budgeted: parseMoney(d.budgeted),
           spent: 0,
-          period: newBucket.period,
+          period: d.period === "weekly" ? "weekly" : "monthly",
         };
         setBuckets((prev) => [...prev, b]);
-        setNewBucket({ name: "", budgeted: "", period: "monthly" });
+
+        newBucketRef.current = { name: "", budgeted: "", period: "monthly" };
+        setBucketFormKey(k => k + 1);
       };
 
       const deleteBucket = (id) => {
@@ -573,23 +602,24 @@
       };
 
       // ---------------- CRUD: Income ----------------
-      const [newIncome, setNewIncome] = React.useState({ name: "", amount: "", frequency: "monthly", nextDate: "" });
-
       const addIncome = () => {
-        if (!newIncome.name || !newIncome.amount) return;
-        if (newIncome.frequency === "once" && !parseYMDLocal(newIncome.nextDate)) return;
+        const d = newIncomeRef.current || {};
+        if (!String(d.name || "").trim() || !String(d.amount || "").trim()) return;
+        if (d.frequency === "once" && !parseYMDLocal(d.nextDate)) return;
 
         setRecurringIncome((prev) => [
           ...prev,
           {
             id: Date.now(),
-            name: newIncome.name.trim(),
-            amount: round2(parseFloat(newIncome.amount)),
-            frequency: newIncome.frequency,
-            nextDate: newIncome.nextDate || "",
+            name: String(d.name).trim(),
+            amount: parseMoney(d.amount),
+            frequency: d.frequency || "monthly",
+            nextDate: d.nextDate || "",
           }
         ]);
-        setNewIncome({ name: "", amount: "", frequency: "monthly", nextDate: "" });
+
+        newIncomeRef.current = { name: "", amount: "", frequency: "monthly", nextDate: "" };
+        setIncomeFormKey(k => k + 1);
       };
 
       const deleteIncome = (id) => setRecurringIncome((prev) => prev.filter((i) => i.id !== id));
@@ -599,27 +629,28 @@
       };
 
       // ---------------- CRUD: Bills ----------------
-      const [newBill, setNewBill] = React.useState({ name: "", amount: "", frequency: "monthly", dueDay: "", dueMonth: "", nextDate: "" });
-
       const addBill = () => {
-        if (!newBill.name || !newBill.amount) return;
+        const d = newBillRef.current || {};
+        if (!String(d.name || "").trim() || !String(d.amount || "").trim()) return;
 
         const bill = {
           id: Date.now(),
-          name: newBill.name.trim(),
-          amount: round2(parseFloat(newBill.amount)),
-          frequency: newBill.frequency,
+          name: String(d.name).trim(),
+          amount: parseMoney(d.amount),
+          frequency: d.frequency || "monthly",
         };
 
-        if (newBill.frequency === "monthly") bill.dueDay = clamp(parseInt(newBill.dueDay || "1", 10), 1, 28);
-        if (newBill.frequency === "yearly") {
-          bill.dueMonth = clamp(parseInt(newBill.dueMonth || "1", 10), 1, 12);
-          bill.dueDay = clamp(parseInt(newBill.dueDay || "1", 10), 1, 28);
+        if (bill.frequency === "monthly") bill.dueDay = clamp(parseInt(d.dueDay || "1", 10), 1, 28);
+        if (bill.frequency === "yearly") {
+          bill.dueMonth = clamp(parseInt(d.dueMonth || "1", 10), 1, 12);
+          bill.dueDay = clamp(parseInt(d.dueDay || "1", 10), 1, 28);
         }
-        if (newBill.frequency === "weekly") bill.nextDate = newBill.nextDate || "";
+        if (bill.frequency === "weekly") bill.nextDate = d.nextDate || "";
 
         setRecurringBills((prev) => [...prev, bill]);
-        setNewBill({ name: "", amount: "", frequency: "monthly", dueDay: "", dueMonth: "", nextDate: "" });
+
+        newBillRef.current = { name: "", amount: "", frequency: "monthly", dueDay: "", dueMonth: "", nextDate: "" };
+        setBillFormKey(k => k + 1);
       };
 
       const deleteBill = (id) => setRecurringBills((prev) => prev.filter((b) => b.id !== id));
@@ -632,13 +663,14 @@
       const JSON_START = "---BEGIN_BUDGET_BUCKETS_JSON---";
       const JSON_END = "---END_BUDGET_BUCKETS_JSON---";
 
-      // ✅ Download ONLY the 4 things you asked for
       const downloadDataBackup = () => {
         const label = new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
         const payload = {
-          version: 4,
+          version: 6,
           exportedAt: new Date().toISOString(),
+          selectedYear,
+          selectedMonth,
           buckets,
           recurringIncome,
           recurringBills,
@@ -666,14 +698,15 @@
         `${t.bucketId}|${t.date}|${round2(t.amount).toFixed(2)}|${String(t.description || "").trim()}`;
 
       const normalizePayload = (p) => {
-        // Accept older formats. We only care about these arrays.
         const out = {
+          selectedYear: Number.isFinite(Number(p?.selectedYear)) ? Number(p.selectedYear) : selectedYear,
+          selectedMonth: Number.isFinite(Number(p?.selectedMonth)) ? Number(p.selectedMonth) : selectedMonth,
           buckets: Array.isArray(p?.buckets) ? p.buckets : [],
           recurringIncome: Array.isArray(p?.recurringIncome) ? p.recurringIncome : (Array.isArray(p?.income) ? p.income : []),
           recurringBills: Array.isArray(p?.recurringBills) ? p.recurringBills : (Array.isArray(p?.bills) ? p.bills : []),
           transactions: Array.isArray(p?.transactions) ? p.transactions : [],
         };
-        // Basic shape cleanup so the app doesn't explode
+
         out.buckets = out.buckets.map(b => ({
           id: b.id ?? Date.now() + Math.random(),
           name: String(b.name ?? "Bucket"),
@@ -681,6 +714,7 @@
           spent: round2(Number(b.spent ?? 0)),
           period: (b.period === "weekly") ? "weekly" : "monthly",
         }));
+
         out.recurringIncome = out.recurringIncome.map(i => ({
           id: i.id ?? Date.now() + Math.random(),
           name: String(i.name ?? "Income"),
@@ -688,6 +722,7 @@
           frequency: ["monthly","weekly","biweekly","once"].includes(i.frequency) ? i.frequency : "monthly",
           nextDate: i.nextDate || "",
         }));
+
         out.recurringBills = out.recurringBills.map(b => {
           const freq = ["monthly","weekly","yearly"].includes(b.frequency) ? b.frequency : "monthly";
           const base = {
@@ -698,9 +733,9 @@
           };
           if (freq === "monthly") return { ...base, dueDay: clamp(Number(b.dueDay ?? 1), 1, 28) };
           if (freq === "yearly") return { ...base, dueMonth: clamp(Number(b.dueMonth ?? 1), 1, 12), dueDay: clamp(Number(b.dueDay ?? 1), 1, 28) };
-          // weekly
           return { ...base, nextDate: b.nextDate || "" };
         });
+
         out.transactions = out.transactions.map(t => ({
           id: t.id ?? (Date.now() + Math.random()),
           bucketId: Number(t.bucketId ?? 0),
@@ -708,6 +743,7 @@
           description: String(t.description ?? ""),
           date: t.date || "",
         }));
+
         return out;
       };
 
@@ -715,19 +751,15 @@
         const startIdx = text.indexOf(JSON_START);
         const endIdx = text.indexOf(JSON_END);
 
-        // Newer files: JSON wrapped in markers
         if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
           const jsonStr = text.slice(startIdx + JSON_START.length, endIdx).trim();
           return JSON.parse(jsonStr);
         }
 
-        // Older files: sometimes the whole file IS JSON (or starts with JSON)
         const trimmed = text.trim();
 
-        // Try direct JSON parse
         try { return JSON.parse(trimmed); } catch (e) {}
 
-        // Try to find first "{" and last "}"
         const first = trimmed.indexOf("{");
         const last = trimmed.lastIndexOf("}");
         if (first !== -1 && last !== -1 && last > first) {
@@ -738,6 +770,76 @@
         throw new Error("No JSON found");
       };
 
+      const parseLegacyMonthlySummary = (text) => {
+        const lines = String(text || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+        const out = {
+          version: 0,
+          exportedAt: new Date().toISOString(),
+          buckets: [],
+          recurringIncome: [],
+          recurringBills: [],
+          transactions: [],
+        };
+
+        let mode = "";
+        for (const line of lines) {
+          const upper = line.toUpperCase();
+          if (upper.startsWith("INCOME:")) { mode = "income"; continue; }
+          if (upper.startsWith("BUCKETS:")) { mode = "buckets"; continue; }
+          if (upper.startsWith("BILLS:")) { mode = "bills"; continue; }
+          if (upper.startsWith("TOTAL_") || upper.startsWith("MONTHLY SUMMARY")) continue;
+
+          if (mode === "income") {
+            const parts = line.split(",").map(x => x.trim());
+            if (parts.length >= 4) {
+              out.recurringIncome.push({
+                id: Date.now() + Math.random(),
+                name: parts[0],
+                amount: round2(Number(parts[1] || 0)),
+                frequency: (["weekly","biweekly","monthly","once"].includes(parts[2]?.toLowerCase())) ? parts[2].toLowerCase() : "monthly",
+                nextDate: parts[3] || "",
+              });
+            }
+            continue;
+          }
+
+          if (mode === "buckets") {
+            const parts = line.split(",").map(x => x.trim());
+            if (parts.length >= 2) {
+              out.buckets.push({
+                id: Date.now() + Math.random(),
+                name: parts[0],
+                budgeted: round2(Number(parts[1] || 0)),
+                spent: round2(Number(parts[2] || 0)),
+                period: "monthly",
+              });
+            }
+            continue;
+          }
+
+          if (mode === "bills") {
+            const parts = line.split(",").map(x => x.trim());
+            if (parts.length >= 3) {
+              const d = parseYMDLocal(parts[2]);
+              out.recurringBills.push({
+                id: Date.now() + Math.random(),
+                name: parts[0],
+                amount: round2(Number(parts[1] || 0)),
+                frequency: "monthly",
+                dueDay: d ? clamp(d.getDate(), 1, 28) : 1,
+              });
+            }
+            continue;
+          }
+        }
+
+        if (!out.buckets.length && !out.recurringIncome.length && !out.recurringBills.length) {
+          throw new Error("Legacy format not recognized");
+        }
+        return out;
+      };
+
       const handleUpload = (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -746,15 +848,23 @@
         reader.onload = (ev) => {
           try {
             const text = String(ev.target.result || "");
-            const raw = extractJsonFromText(text);
+            let raw;
+
+            try {
+              raw = extractJsonFromText(text);
+            } catch (jsonErr) {
+              raw = parseLegacyMonthlySummary(text);
+            }
+
             const payload = normalizePayload(raw);
 
-            // Replace these lists (that’s what you want)
+            setSelectedYear(payload.selectedYear ?? selectedYear);
+            setSelectedMonth(payload.selectedMonth ?? selectedMonth);
+
             setBuckets(payload.buckets);
             setRecurringIncome(payload.recurringIncome);
             setRecurringBills(payload.recurringBills);
 
-            // Merge transactions without duplicates
             setTransactions((prev) => {
               const seen = new Set(prev.map(txKey));
               const toAdd = payload.transactions.filter(t => {
@@ -768,7 +878,7 @@
 
             alert("Imported ✅");
           } catch (err) {
-            alert("Could not import that file. Try downloading a fresh backup from this version and re-uploading.");
+            alert("Could not import that file. If it’s an old summary, make sure it includes INCOME:, BUCKETS:, and/or BILLS sections, OR download a fresh backup from this version.");
           } finally {
             e.target.value = "";
           }
@@ -788,75 +898,159 @@
       const monthTxTotal = round2(monthTransactions.reduce((s, t) => s + (Number(t.amount) || 0), 0));
       const monthTxCount = monthTransactions.length;
 
-      // ---------------- Editing states ----------------
+      // ---------------- Editing states (IDs only) ----------------
       const [editingBucketId, setEditingBucketId] = React.useState(null);
       const [editingIncomeId, setEditingIncomeId] = React.useState(null);
       const [editingBillId, setEditingBillId] = React.useState(null);
 
-      const [bucketDraft, setBucketDraft] = React.useState(null);
-      const [incomeDraft, setIncomeDraft] = React.useState(null);
-      const [billDraft, setBillDraft] = React.useState(null);
-
-      const startEditBucket = (b) => { setEditingBucketId(b.id); setBucketDraft({ ...b, budgeted: String(b.budgeted ?? "") }); };
-      const cancelEditBucket = () => { setEditingBucketId(null); setBucketDraft(null); };
+      // ---- Edit start/cancel/save (refs) ----
+      const startEditBucket = (b) => {
+        setEditingBucketId(b.id);
+        bucketDraftRef.current = { ...b, budgeted: String(b.budgeted ?? "") };
+        setEditKey(k => k + 1);
+      };
+      const cancelEditBucket = () => { setEditingBucketId(null); bucketDraftRef.current = null; setEditKey(k => k + 1); };
       const saveEditBucket = () => {
-        if (!bucketDraft) return;
-        updateBucket(bucketDraft.id, {
-          name: String(bucketDraft.name || "").trim() || "Bucket",
-          budgeted: round2(parseFloat(bucketDraft.budgeted || "0")),
-          period: bucketDraft.period === "weekly" ? "weekly" : "monthly"
+        const d = bucketDraftRef.current;
+        if (!d) return;
+        updateBucket(d.id, {
+          name: String(d.name || "").trim() || "Bucket",
+          budgeted: parseMoney(d.budgeted),
+          period: d.period === "weekly" ? "weekly" : "monthly"
         });
         cancelEditBucket();
       };
 
-      const startEditIncome = (i) => { setEditingIncomeId(i.id); setIncomeDraft({ ...i, amount: String(i.amount ?? "") }); };
-      const cancelEditIncome = () => { setEditingIncomeId(null); setIncomeDraft(null); };
+      const startEditIncome = (i) => {
+        setEditingIncomeId(i.id);
+        incomeDraftRef.current = { ...i, amount: String(i.amount ?? "") };
+        setEditKey(k => k + 1);
+      };
+      const cancelEditIncome = () => { setEditingIncomeId(null); incomeDraftRef.current = null; setEditKey(k => k + 1); };
       const saveEditIncome = () => {
-        if (!incomeDraft) return;
-        updateIncome(incomeDraft.id, {
-          name: String(incomeDraft.name || "").trim() || "Income",
-          amount: round2(parseFloat(incomeDraft.amount || "0")),
-          frequency: incomeDraft.frequency,
-          nextDate: incomeDraft.nextDate || ""
+        const d = incomeDraftRef.current;
+        if (!d) return;
+        updateIncome(d.id, {
+          name: String(d.name || "").trim() || "Income",
+          amount: parseMoney(d.amount),
+          frequency: d.frequency,
+          nextDate: d.nextDate || ""
         });
         cancelEditIncome();
       };
 
       const startEditBill = (b) => {
         setEditingBillId(b.id);
-        setBillDraft({
+        billDraftRef.current = {
           ...b,
           amount: String(b.amount ?? ""),
           dueDay: b.dueDay != null ? String(b.dueDay) : "",
           dueMonth: b.dueMonth != null ? String(b.dueMonth) : "",
           nextDate: b.nextDate || ""
-        });
+        };
+        setEditKey(k => k + 1);
       };
-      const cancelEditBill = () => { setEditingBillId(null); setBillDraft(null); };
+      const cancelEditBill = () => { setEditingBillId(null); billDraftRef.current = null; setEditKey(k => k + 1); };
       const saveEditBill = () => {
-        if (!billDraft) return;
-        const freq = billDraft.frequency;
+        const d = billDraftRef.current;
+        if (!d) return;
+        const freq = d.frequency;
         const patch = {
-          name: String(billDraft.name || "").trim() || "Bill",
-          amount: round2(parseFloat(billDraft.amount || "0")),
+          name: String(d.name || "").trim() || "Bill",
+          amount: parseMoney(d.amount),
           frequency: freq,
         };
-        if (freq === "monthly") patch.dueDay = clamp(parseInt(billDraft.dueDay || "1", 10), 1, 28);
+        if (freq === "monthly") patch.dueDay = clamp(parseInt(d.dueDay || "1", 10), 1, 28);
         if (freq === "yearly") {
-          patch.dueMonth = clamp(parseInt(billDraft.dueMonth || "1", 10), 1, 12);
-          patch.dueDay = clamp(parseInt(billDraft.dueDay || "1", 10), 1, 28);
+          patch.dueMonth = clamp(parseInt(d.dueMonth || "1", 10), 1, 12);
+          patch.dueDay = clamp(parseInt(d.dueDay || "1", 10), 1, 28);
         }
-        if (freq === "weekly") patch.nextDate = billDraft.nextDate || "";
-        updateBill(billDraft.id, patch);
+        if (freq === "weekly") patch.nextDate = d.nextDate || "";
+        updateBill(d.id, patch);
         cancelEditBill();
       };
+
+      // ---------------- Weekly Summary (next 4 weeks) ----------------
+      const getWeekRange = (startDate) => {
+        const s = new Date(startDate); s.setHours(0,0,0,0);
+        const e = addDays(s, 6); e.setHours(23,59,59,999);
+        return { start: s, end: e };
+      };
+
+      const listPaychecksInRange = (rangeStart, rangeEnd) => {
+        const main = getMainPaycheck();
+        if (!main) return [];
+        return listOccurrencesInRange(main, "income", rangeStart, rangeEnd);
+      };
+
+      const yearlyBillsWeeklyReserve = round2(
+        recurringBills
+          .filter(b => b.frequency === "yearly")
+          .reduce((s, b) => s + (Number(b.amount) || 0), 0) / 52
+      );
+
+      const monthlyBucketTotalOnly = round2(
+        buckets.filter(b => b.period !== "weekly").reduce((s,b) => s + (Number(b.budgeted) || 0), 0)
+      );
+
+      const weeklyBucketTotalOnly = round2(
+        buckets.filter(b => b.period === "weekly").reduce((s,b) => s + (Number(b.budgeted) || 0), 0)
+      );
+
+      const monthlyBucketsPerPaycheck = round2(monthlyBucketTotalOnly / Math.max(1, paydaysThisMonth));
+
+      const spendingTotalInRange = (rangeStart, rangeEnd) => {
+        const s = new Date(rangeStart); s.setHours(0,0,0,0);
+        const e = new Date(rangeEnd); e.setHours(23,59,59,999);
+        return round2(
+          transactions.filter(t => {
+            const d = parseYMDLocal(t.date);
+            return d && d >= s && d <= e;
+          }).reduce((sum,t) => sum + (Number(t.amount) || 0), 0)
+        );
+      };
+
+      const nextFourWeeks = Array.from({ length: 4 }, (_, idx) => {
+        const start = addDays(thisWeekStart, idx * 7);
+        const { start: s, end: e } = getWeekRange(start);
+        const events = weekEvents(s, e);
+        const totals = totalsForEvents(events);
+        const paychecks = listPaychecksInRange(s, e);
+
+        const paycheckCount = paychecks.length;
+        const billsDueThisWeek = round2(events.filter(x => x.type === "bill").reduce((sum,x)=>sum + x.amount, 0));
+
+        const billsSinkingFundThisWeek = paycheckCount > 0 ? round2(perPaycheckSetAsideForBills * paycheckCount) : 0;
+        const monthlyExpensesSinkingFundThisWeek = paycheckCount > 0 ? round2(monthlyBucketsPerPaycheck * paycheckCount) : 0;
+
+        const plannedWeeklyExpenses = round2(
+          weeklyBucketTotalOnly + monthlyExpensesSinkingFundThisWeek + yearlyBillsWeeklyReserve
+        );
+
+        const actualSpent = spendingTotalInRange(s, e);
+
+        return {
+          idx,
+          start: s,
+          end: e,
+          events,
+          totals,
+          paycheckCount,
+          billsDueThisWeek,
+          billsSinkingFundThisWeek,
+          annualReserve: yearlyBillsWeeklyReserve,
+          monthlyExpenseSplitThisWeek: monthlyExpensesSinkingFundThisWeek,
+          plannedWeeklyExpenses,
+          actualSpent
+        };
+      });
 
       // ---------------- Render ----------------
       return (
         <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-sky-50 to-emerald-50">
           <div className="max-w-6xl mx-auto p-2 sm:p-4 md:p-6">
 
-            {/* Header (less crowded) */}
+            {/* Header */}
             <header className="mb-4 sm:mb-6">
               <div className="bg-white/80 backdrop-blur rounded-2xl border border-slate-100 shadow-sm">
                 <div className="p-3 sm:p-4">
@@ -911,7 +1105,7 @@
                               <input type="file" accept=".txt,.json" onChange={handleUpload} className="hidden" />
                             </label>
                             <div className="mt-2 text-xs text-slate-500">
-                              Imports older files too. Transactions merge (no duplicates).
+                              Imports markers JSON, raw JSON, and older Monthly Summary text (best-effort). Transactions merge (no duplicates).
                             </div>
                           </div>
                         </details>
@@ -939,7 +1133,7 @@
 
                 <div className="border-t border-slate-100 px-3 sm:px-4 py-2">
                   <nav className="flex flex-wrap gap-2">
-                    {["summary", "buckets", "income", "bills", "transactions"].map(tab =>
+                    {["summary", "weekly", "buckets", "income", "bills", "transactions"].map(tab =>
                       <button
                         key={tab}
                         onClick={() => setActiveTab(tab)}
@@ -947,7 +1141,7 @@
                           activeTab === tab ? "bg-indigo-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50 border border-slate-200"
                         }`}
                       >
-                        {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                        {tab === "weekly" ? "Weekly Summary" : tab.charAt(0).toUpperCase() + tab.slice(1)}
                       </button>
                     )}
                   </nav>
@@ -965,7 +1159,6 @@
                   <StatCard label="Remaining now" value={currency(monthlyRemaining)} sub="Income − Bills − Spent" tone={monthlyRemaining >= 0 ? "emerald" : "rose"} />
                 </div>
 
-                {/* Weekly cashflow (restored) */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <Card className="p-4">
                     <div className="flex items-start justify-between">
@@ -1173,6 +1366,132 @@
               </section>
             )}
 
+            {/* -------------------- WEEKLY SUMMARY (Next 4 weeks) -------------------- */}
+            {activeTab === "weekly" && (
+              <section className="space-y-4">
+                <Card className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h2 className="text-xl font-extrabold text-slate-800">Weekly Summary (Next 4 weeks)</h2>
+                      <div className="text-xs text-slate-500 mt-1">
+                        Uses your custom week start ({weekStartLabel}). Monthly expenses + bills are split per paycheck week. Annual bills are reserved weekly.
+                      </div>
+                    </div>
+                    {usedFallbackPaydays && (
+                      <Pill className="bg-amber-50 text-amber-800 border-amber-200">⚠️ paycheck count estimate</Pill>
+                    )}
+                  </div>
+                </Card>
+
+                {nextFourWeeks.map(w => (
+                  <Card key={w.idx} className="p-4">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                      <div>
+                        <div className="text-sm text-slate-500">Week {w.idx + 1}</div>
+                        <div className="text-lg font-extrabold text-slate-800">
+                          {fmtDate(w.start)} → {fmtDate(w.end)}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          Paychecks this week: <span className="font-semibold text-slate-700">{w.paycheckCount}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <Pill className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                          Income: <span className="ml-1 font-semibold">{currency(w.totals.income)}</span>
+                        </Pill>
+                        <Pill className="bg-rose-50 text-rose-700 border-rose-200">
+                          Bills due: <span className="ml-1 font-semibold">-{currency(w.billsDueThisWeek).slice(1)}</span>
+                        </Pill>
+                        <Pill className="bg-indigo-50 text-indigo-700 border-indigo-200">
+                          Net (sched): <span className="ml-1 font-semibold">{currency(w.totals.leftover)}</span>
+                        </Pill>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-3">
+                      <div className="p-3 rounded-2xl border border-slate-100 bg-slate-50">
+                        <div className="text-xs uppercase tracking-wide text-slate-600 font-semibold">Bills funding</div>
+                        <div className="mt-2 space-y-1 text-sm text-slate-700">
+                          <div className="flex justify-between">
+                            <span>Set aside (per paycheck)</span>
+                            <span className="font-extrabold text-indigo-700">{currency(w.billsSinkingFundThisWeek)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Annual reserve (weekly)</span>
+                            <span className="font-extrabold text-indigo-700">{currency(w.annualReserve)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Bills due (actual)</span>
+                            <span className="font-extrabold text-rose-700">-{currency(w.billsDueThisWeek).slice(1)}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-3 rounded-2xl border border-slate-100 bg-slate-50">
+                        <div className="text-xs uppercase tracking-wide text-slate-600 font-semibold">Expenses plan</div>
+                        <div className="mt-2 space-y-1 text-sm text-slate-700">
+                          <div className="flex justify-between">
+                            <span>Weekly buckets budget</span>
+                            <span className="font-extrabold">{currency(weeklyBucketTotalOnly)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Monthly buckets split (this week)</span>
+                            <span className="font-extrabold">{currency(w.monthlyExpenseSplitThisWeek)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Planned total</span>
+                            <span className="font-extrabold text-slate-800">{currency(w.plannedWeeklyExpenses)}</span>
+                          </div>
+                        </div>
+                        <div className="mt-3 text-xs text-slate-500">
+                          Monthly split is only applied in weeks that contain paychecks.
+                        </div>
+                      </div>
+
+                      <div className="p-3 rounded-2xl border border-slate-100 bg-slate-50">
+                        <div className="text-xs uppercase tracking-wide text-slate-600 font-semibold">Actual spending</div>
+                        <div className="mt-2">
+                          <div className="text-3xl font-extrabold text-slate-800">{currency(w.actualSpent)}</div>
+                          <div className="text-xs text-slate-500 mt-1">From transactions dated inside this week</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
+                      <div className="p-3 rounded-2xl border border-emerald-100 bg-emerald-50">
+                        <div className="text-xs uppercase tracking-wide text-emerald-700 font-semibold">Income this week</div>
+                        <div className="mt-2 space-y-1 text-sm text-emerald-900">
+                          {w.events.filter(x => x.type === "income").length === 0 ? (
+                            <div className="text-sm text-emerald-800/70">No income scheduled.</div>
+                          ) : w.events.filter(x => x.type === "income").map(ev => (
+                            <div key={ev.id} className="flex justify-between">
+                              <span><span className="font-semibold">{niceDate(ev.date)}</span> · {ev.name}</span>
+                              <span className="font-extrabold">{currency(ev.amount)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="p-3 rounded-2xl border border-rose-100 bg-rose-50">
+                        <div className="text-xs uppercase tracking-wide text-rose-700 font-semibold">Bills due this week</div>
+                        <div className="mt-2 space-y-1 text-sm text-rose-900">
+                          {w.events.filter(x => x.type === "bill").length === 0 ? (
+                            <div className="text-sm text-rose-800/70">No bills scheduled.</div>
+                          ) : w.events.filter(x => x.type === "bill").map(ev => (
+                            <div key={ev.id} className="flex justify-between">
+                              <span><span className="font-semibold">{niceDate(ev.date)}</span> · {ev.name}</span>
+                              <span className="font-extrabold">-{currency(ev.amount).slice(1)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </section>
+            )}
+
             {/* -------------------- BUCKETS -------------------- */}
             {activeTab === "buckets" && (
               <section className="space-y-4">
@@ -1221,17 +1540,32 @@
                             </div>
                           </>
                         ) : (
-                          <>
+                          <div key={`edit-bucket-${b.id}-${editKey}`}>
                             <div className="font-extrabold text-slate-800">Edit bucket</div>
                             <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
                               <Field label="Name">
-                                <input className={inputBase} value={bucketDraft?.name ?? ""} onChange={(e) => setBucketDraft(d => ({ ...d, name: e.target.value }))} />
+                                <input
+                                  className={inputBase}
+                                  defaultValue={bucketDraftRef.current?.name ?? ""}
+                                  onInput={(e) => setRefField(bucketDraftRef, "name", e.target.value)}
+                                />
                               </Field>
                               <Field label="Budgeted">
-                                <input type="number" className={inputBase} value={bucketDraft?.budgeted ?? ""} onChange={(e) => setBucketDraft(d => ({ ...d, budgeted: e.target.value }))} />
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  placeholder="0.00"
+                                  className={moneyInputBase}
+                                  defaultValue={bucketDraftRef.current?.budgeted ?? ""}
+                                  onInput={(e) => setRefField(bucketDraftRef, "budgeted", e.target.value)}
+                                />
                               </Field>
                               <Field label="Period">
-                                <select className={inputBase} value={bucketDraft?.period ?? "monthly"} onChange={(e) => setBucketDraft(d => ({ ...d, period: e.target.value }))}>
+                                <select
+                                  className={inputBase}
+                                  defaultValue={bucketDraftRef.current?.period ?? "monthly"}
+                                  onChange={(e) => setRefField(bucketDraftRef, "period", e.target.value)}
+                                >
                                   <option value="monthly">Monthly</option>
                                   <option value="weekly">Weekly</option>
                                 </select>
@@ -1241,24 +1575,40 @@
                               <button onClick={cancelEditBucket} className={buttonBase + " " + btnSoft}>Cancel</button>
                               <button onClick={saveEditBucket} className={buttonBase + " " + btnPrimary}>Save</button>
                             </div>
-                          </>
+                          </div>
                         )}
                       </Card>
                     );
                   })}
                 </div>
 
-                <Card className="p-3 sm:p-4">
+                <Card className="p-3 sm:p-4" key={`bucket-form-${bucketFormKey}`}>
                   <h3 className="font-semibold text-slate-800 mb-3">Add Bucket</h3>
                   <form className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end" onSubmit={(e) => { e.preventDefault(); addBucket(); }}>
                     <Field label="Name">
-                      <input className={inputBase} placeholder="Name" value={newBucket.name} onChange={(e) => setNewBucket({ ...newBucket, name: e.target.value })} />
+                      <input
+                        className={inputBase}
+                        placeholder="Name"
+                        defaultValue=""
+                        onInput={(e) => setRefField(newBucketRef, "name", e.target.value)}
+                      />
                     </Field>
                     <Field label="Amount">
-                      <input type="number" className={inputBase} placeholder="Amount" value={newBucket.budgeted} onChange={(e) => setNewBucket({ ...newBucket, budgeted: e.target.value })} />
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        className={moneyInputBase}
+                        defaultValue=""
+                        onInput={(e) => setRefField(newBucketRef, "budgeted", e.target.value)}
+                      />
                     </Field>
                     <Field label="Period">
-                      <select className={inputBase} value={newBucket.period} onChange={(e) => setNewBucket({ ...newBucket, period: e.target.value })}>
+                      <select
+                        className={inputBase}
+                        defaultValue="monthly"
+                        onChange={(e) => setRefField(newBucketRef, "period", e.target.value)}
+                      >
                         <option value="monthly">Monthly</option>
                         <option value="weekly">Weekly</option>
                       </select>
@@ -1304,32 +1654,52 @@
                                 </div>
                               </div>
                             ) : (
-                              <>
+                              <div key={`edit-income-${i.id}-${editKey}`}>
                                 <div className="font-extrabold text-slate-800">Edit income</div>
                                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-4 gap-3">
                                   <Field label="Name">
-                                    <input className={inputBase} value={incomeDraft?.name ?? ""} onChange={(e)=>setIncomeDraft(d=>({ ...d, name: e.target.value }))} />
+                                    <input
+                                      className={inputBase}
+                                      defaultValue={incomeDraftRef.current?.name ?? ""}
+                                      onInput={(e)=>setRefField(incomeDraftRef,"name",e.target.value)}
+                                    />
                                   </Field>
                                   <Field label="Amount">
-                                    <input type="number" className={inputBase} value={incomeDraft?.amount ?? ""} onChange={(e)=>setIncomeDraft(d=>({ ...d, amount: e.target.value }))} />
+                                    <input
+                                      type="text"
+                                      inputMode="decimal"
+                                      placeholder="0.00"
+                                      className={moneyInputBase}
+                                      defaultValue={incomeDraftRef.current?.amount ?? ""}
+                                      onInput={(e)=>setRefField(incomeDraftRef,"amount",e.target.value)}
+                                    />
                                   </Field>
                                   <Field label="Frequency">
-                                    <select className={inputBase} value={incomeDraft?.frequency ?? "monthly"} onChange={(e)=>setIncomeDraft(d=>({ ...d, frequency: e.target.value }))}>
+                                    <select
+                                      className={inputBase}
+                                      defaultValue={incomeDraftRef.current?.frequency ?? "monthly"}
+                                      onChange={(e)=>setRefField(incomeDraftRef,"frequency",e.target.value)}
+                                    >
                                       <option value="monthly">Monthly</option>
                                       <option value="weekly">Weekly</option>
                                       <option value="biweekly">Bi-weekly</option>
                                       <option value="once">One-time</option>
                                     </select>
                                   </Field>
-                                  <Field label={(incomeDraft?.frequency === "once") ? "Date" : "Anchor / Next Date"}>
-                                    <input type="date" className={inputBase} value={incomeDraft?.nextDate ?? ""} onChange={(e)=>setIncomeDraft(d=>({ ...d, nextDate: e.target.value }))} />
+                                  <Field label={(incomeDraftRef.current?.frequency === "once") ? "Date" : "Anchor / Next Date"}>
+                                    <input
+                                      type="date"
+                                      className={inputBase}
+                                      defaultValue={incomeDraftRef.current?.nextDate ?? ""}
+                                      onChange={(e)=>setRefField(incomeDraftRef,"nextDate",e.target.value)}
+                                    />
                                   </Field>
                                 </div>
                                 <div className="mt-3 flex gap-2 justify-end">
                                   <button onClick={cancelEditIncome} className={buttonBase + " " + btnSoft}>Cancel</button>
                                   <button onClick={saveEditIncome} className={buttonBase + " " + btnPrimary}>Save</button>
                                 </div>
-                              </>
+                              </div>
                             )}
                           </div>
                         );
@@ -1337,25 +1707,26 @@
                   </div>
                 </Card>
 
-                <Card className="p-3 sm:p-4">
+                <Card className="p-3 sm:p-4" key={`income-form-${incomeFormKey}`}>
                   <h3 className="font-semibold text-slate-800 mb-3">Add Income</h3>
                   <form className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end" onSubmit={(e) => { e.preventDefault(); addIncome(); }}>
                     <Field label="Name">
-                      <input className={inputBase} value={newIncome.name} onChange={(e) => setNewIncome({ ...newIncome, name: e.target.value })} />
+                      <input className={inputBase} defaultValue="" onInput={(e)=>setRefField(newIncomeRef,"name",e.target.value)} />
                     </Field>
                     <Field label="Amount">
-                      <input type="number" className={inputBase} value={newIncome.amount} onChange={(e) => setNewIncome({ ...newIncome, amount: e.target.value })} />
+                      <input type="text" inputMode="decimal" placeholder="0.00" className={moneyInputBase} defaultValue=""
+                        onInput={(e)=>setRefField(newIncomeRef,"amount",e.target.value)} />
                     </Field>
                     <Field label="Frequency">
-                      <select className={inputBase} value={newIncome.frequency} onChange={(e) => setNewIncome({ ...newIncome, frequency: e.target.value })}>
+                      <select className={inputBase} defaultValue="monthly" onChange={(e)=>setRefField(newIncomeRef,"frequency",e.target.value)}>
                         <option value="monthly">Monthly</option>
                         <option value="weekly">Weekly</option>
                         <option value="biweekly">Bi-weekly</option>
                         <option value="once">One-time</option>
                       </select>
                     </Field>
-                    <Field label={newIncome.frequency === "once" ? "Date" : "Anchor / Next Date"}>
-                      <input type="date" className={inputBase} value={newIncome.nextDate} onChange={(e) => setNewIncome({ ...newIncome, nextDate: e.target.value })} />
+                    <Field label="Date / Anchor">
+                      <input type="date" className={inputBase} defaultValue="" onChange={(e)=>setRefField(newIncomeRef,"nextDate",e.target.value)} />
                     </Field>
                     <button type="submit" className={buttonBase + " " + btnPrimary + " w-full"}>Add</button>
                   </form>
@@ -1394,46 +1765,49 @@
                                 </div>
                               </div>
                             ) : (
-                              <>
+                              <div key={`edit-bill-${b.id}-${editKey}`}>
                                 <div className="font-extrabold text-slate-800">Edit bill</div>
                                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-4 gap-3">
                                   <Field label="Name">
-                                    <input className={inputBase} value={billDraft?.name ?? ""} onChange={(e)=>setBillDraft(d=>({ ...d, name: e.target.value }))} />
+                                    <input className={inputBase} defaultValue={billDraftRef.current?.name ?? ""} onInput={(e)=>setRefField(billDraftRef,"name",e.target.value)} />
                                   </Field>
                                   <Field label="Amount">
-                                    <input type="number" className={inputBase} value={billDraft?.amount ?? ""} onChange={(e)=>setBillDraft(d=>({ ...d, amount: e.target.value }))} />
+                                    <input type="text" inputMode="decimal" placeholder="0.00" className={moneyInputBase}
+                                      defaultValue={billDraftRef.current?.amount ?? ""} onInput={(e)=>setRefField(billDraftRef,"amount",e.target.value)} />
                                   </Field>
                                   <Field label="Frequency">
-                                    <select className={inputBase} value={billDraft?.frequency ?? "monthly"} onChange={(e)=>setBillDraft(d=>({ ...d, frequency: e.target.value }))}>
+                                    <select className={inputBase} defaultValue={billDraftRef.current?.frequency ?? "monthly"} onChange={(e)=>setRefField(billDraftRef,"frequency",e.target.value)}>
                                       <option value="monthly">Monthly</option>
                                       <option value="weekly">Weekly</option>
                                       <option value="yearly">Yearly</option>
                                     </select>
                                   </Field>
 
-                                  {billDraft?.frequency === "monthly" && (
+                                  {(billDraftRef.current?.frequency ?? "monthly") === "monthly" && (
                                     <Field label="Due day (1-28)">
-                                      <input type="number" className={inputBase} value={billDraft?.dueDay ?? ""} onChange={(e)=>setBillDraft(d=>({ ...d, dueDay: e.target.value }))} />
+                                      <input type="number" className={inputBase} defaultValue={billDraftRef.current?.dueDay ?? ""} onInput={(e)=>setRefField(billDraftRef,"dueDay",e.target.value)} />
                                     </Field>
                                   )}
-                                  {billDraft?.frequency === "weekly" && (
+
+                                  {(billDraftRef.current?.frequency ?? "monthly") === "weekly" && (
                                     <Field label="Anchor date">
-                                      <input type="date" className={inputBase} value={billDraft?.nextDate ?? ""} onChange={(e)=>setBillDraft(d=>({ ...d, nextDate: e.target.value }))} />
+                                      <input type="date" className={inputBase} defaultValue={billDraftRef.current?.nextDate ?? ""} onChange={(e)=>setRefField(billDraftRef,"nextDate",e.target.value)} />
                                     </Field>
                                   )}
-                                  {billDraft?.frequency === "yearly" && (
+
+                                  {(billDraftRef.current?.frequency ?? "monthly") === "yearly" && (
                                     <>
                                       <Field label="Due month (1-12)">
-                                        <input type="number" className={inputBase} value={billDraft?.dueMonth ?? ""} onChange={(e)=>setBillDraft(d=>({ ...d, dueMonth: e.target.value }))} />
+                                        <input type="number" className={inputBase} defaultValue={billDraftRef.current?.dueMonth ?? ""} onInput={(e)=>setRefField(billDraftRef,"dueMonth",e.target.value)} />
                                       </Field>
                                       <Field label="Due day (1-28)">
-                                        <input type="number" className={inputBase} value={billDraft?.dueDay ?? ""} onChange={(e)=>setBillDraft(d=>({ ...d, dueDay: e.target.value }))} />
+                                        <input type="number" className={inputBase} defaultValue={billDraftRef.current?.dueDay ?? ""} onInput={(e)=>setRefField(billDraftRef,"dueDay",e.target.value)} />
                                       </Field>
                                     </>
                                   )}
                                 </div>
 
-                                {billDraft?.frequency === "weekly" && !parseYMDLocal(billDraft?.nextDate) && (
+                                {(billDraftRef.current?.frequency === "weekly") && !parseYMDLocal(billDraftRef.current?.nextDate) && (
                                   <div className="mt-2 text-xs text-amber-800">⚠️ Weekly bills need an anchor date.</div>
                                 )}
 
@@ -1441,7 +1815,7 @@
                                   <button onClick={cancelEditBill} className={buttonBase + " " + btnSoft}>Cancel</button>
                                   <button onClick={saveEditBill} className={buttonBase + " " + btnPrimary}>Save</button>
                                 </div>
-                              </>
+                              </div>
                             )}
                           </div>
                         );
@@ -1449,49 +1823,44 @@
                   </div>
                 </Card>
 
-                <Card className="p-3 sm:p-4">
+                <Card className="p-3 sm:p-4" key={`bill-form-${billFormKey}`}>
                   <h3 className="font-semibold text-slate-800 mb-3">Add Bill</h3>
                   <form className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end" onSubmit={(e) => { e.preventDefault(); addBill(); }}>
                     <Field label="Name">
-                      <input className={inputBase} value={newBill.name} onChange={(e) => setNewBill({ ...newBill, name: e.target.value })} />
+                      <input className={inputBase} defaultValue="" onInput={(e)=>setRefField(newBillRef,"name",e.target.value)} />
                     </Field>
                     <Field label="Amount">
-                      <input type="number" className={inputBase} value={newBill.amount} onChange={(e) => setNewBill({ ...newBill, amount: e.target.value })} />
+                      <input type="text" inputMode="decimal" placeholder="0.00" className={moneyInputBase} defaultValue=""
+                        onInput={(e)=>setRefField(newBillRef,"amount",e.target.value)} />
                     </Field>
                     <Field label="Frequency">
-                      <select className={inputBase} value={newBill.frequency} onChange={(e) => setNewBill({ ...newBill, frequency: e.target.value })}>
+                      <select className={inputBase} defaultValue="monthly" onChange={(e)=>setRefField(newBillRef,"frequency",e.target.value)}>
                         <option value="monthly">Monthly</option>
                         <option value="weekly">Weekly</option>
                         <option value="yearly">Yearly</option>
                       </select>
                     </Field>
 
-                    {newBill.frequency === "monthly" && (
-                      <Field label="Due day (1-28)">
-                        <input type="number" className={inputBase} value={newBill.dueDay} onChange={(e) => setNewBill({ ...newBill, dueDay: e.target.value })} />
-                      </Field>
-                    )}
-                    {newBill.frequency === "weekly" && (
-                      <Field label="Anchor date">
-                        <input type="date" className={inputBase} value={newBill.nextDate} onChange={(e) => setNewBill({ ...newBill, nextDate: e.target.value })} />
-                      </Field>
-                    )}
-                    {newBill.frequency === "yearly" && (
-                      <>
-                        <Field label="Due month (1-12)">
-                          <input type="number" className={inputBase} value={newBill.dueMonth} onChange={(e) => setNewBill({ ...newBill, dueMonth: e.target.value })} />
-                        </Field>
-                        <Field label="Due day (1-28)">
-                          <input type="number" className={inputBase} value={newBill.dueDay} onChange={(e) => setNewBill({ ...newBill, dueDay: e.target.value })} />
-                        </Field>
-                      </>
-                    )}
+                    <Field label="Due day (or anchor)">
+                      <input className={inputBase} placeholder="Monthly due day / Yearly due day" defaultValue=""
+                        onInput={(e)=>setRefField(newBillRef,"dueDay",e.target.value)} />
+                    </Field>
+
+                    <Field label="Due month / Anchor date">
+                      <input className={inputBase} placeholder="Yearly due month OR weekly YYYY-MM-DD" defaultValue=""
+                        onInput={(e)=> {
+                          // If user types a date here, we store as nextDate; else dueMonth
+                          const v = e.target.value;
+                          if (/^\d{4}-\d{2}-\d{2}$/.test(v)) setRefField(newBillRef,"nextDate",v);
+                          else setRefField(newBillRef,"dueMonth",v);
+                        }} />
+                    </Field>
 
                     <button type="submit" className={buttonBase + " " + btnPrimary + " w-full"}>Add</button>
                   </form>
 
-                  {newBill.frequency === "weekly" && !parseYMDLocal(newBill.nextDate) && (
-                    <div className="mt-2 text-xs text-amber-800">⚠️ Weekly bills need an anchor date.</div>
+                  {newBillRef.current?.frequency === "weekly" && !parseYMDLocal(newBillRef.current?.nextDate) && (
+                    <div className="mt-2 text-xs text-amber-800">⚠️ Weekly bills need an anchor date (YYYY-MM-DD in the last field).</div>
                   )}
                 </Card>
               </section>
@@ -1522,23 +1891,24 @@
                     </div>
                   </Card>
 
-                  <Card className="p-3 sm:p-4">
+                  <Card className="p-3 sm:p-4" key={`tx-form-${txFormKey}`}>
                     <h3 className="font-semibold text-slate-800 mb-3">Add Transaction</h3>
                     <form className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end" onSubmit={(e) => { e.preventDefault(); addTransaction(); }}>
                       <Field label="Bucket">
-                        <select className={inputBase} value={newTransaction.bucketId} onChange={(e) => setNewTransaction({ ...newTransaction, bucketId: e.target.value })}>
+                        <select className={inputBase} defaultValue="" onChange={(e)=>setRefField(newTxRef,"bucketId",e.target.value)}>
                           <option value="">Select Bucket</option>
                           {buckets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                         </select>
                       </Field>
                       <Field label="Amount">
-                        <input type="number" className={inputBase} value={newTransaction.amount} onChange={(e) => setNewTransaction({ ...newTransaction, amount: e.target.value })} />
+                        <input type="text" inputMode="decimal" placeholder="0.00" className={moneyInputBase} defaultValue=""
+                          onInput={(e)=>setRefField(newTxRef,"amount",e.target.value)} />
                       </Field>
                       <Field label="Description">
-                        <input className={inputBase} value={newTransaction.description} onChange={(e) => setNewTransaction({ ...newTransaction, description: e.target.value })} />
+                        <input className={inputBase} defaultValue="" onInput={(e)=>setRefField(newTxRef,"description",e.target.value)} />
                       </Field>
                       <Field label="Date">
-                        <input type="date" className={inputBase} value={newTransaction.date} onChange={(e) => setNewTransaction({ ...newTransaction, date: e.target.value })} />
+                        <input type="date" className={inputBase} defaultValue={todayStr} onChange={(e)=>setRefField(newTxRef,"date",e.target.value)} />
                       </Field>
                       <button type="submit" className={buttonBase + " " + btnPrimary + " w-full"}>Add</button>
                     </form>
