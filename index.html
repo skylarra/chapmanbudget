@@ -318,6 +318,7 @@
         return round2(i.amount || 0);
       };
 
+      // (kept for other areas; not used as the "Bills (month)" on summary anymore)
       const monthlyFromBill = (b) => {
         if (b.frequency === "weekly") {
           const count = countOccurrencesInSelectedMonth({ ...b, frequency: "weekly" });
@@ -328,11 +329,8 @@
       };
 
       const totalMonthlyIncome = recurringIncome.reduce((s, i) => s + monthlyFromIncome(i), 0);
-      const totalMonthlyBills = recurringBills.reduce((s, b) => s + monthlyFromBill(b), 0);
+      const totalMonthlyBills_EST = recurringBills.reduce((s, b) => s + monthlyFromBill(b), 0); // legacy/extra info if needed
       const totalMonthlyBudgeted = buckets.reduce((s, b) => s + monthlyFromBudget(b), 0);
-
-      const monthlyRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlySpent);
-      const projectedRemaining = round2(totalMonthlyIncome - totalMonthlyBills - totalMonthlyBudgeted);
 
       // ---------------- Main paycheck + paydays count ----------------
       const getMainPaycheck = () => {
@@ -446,7 +444,7 @@
       const thisWeekTotals = totalsForEvents(thisWeekEvents);
       const nextWeekTotals = totalsForEvents(nextWeekEvents);
 
-      // ---------------- Bills due this month + set-aside per paycheck ----------------
+      // ---------------- Bills due this month (ACTUAL) + per-paycheck (simple) ----------------
       const monthBills = [];
       recurringBills.forEach(b => monthBills.push(...listOccurrencesInRange(b, "bill", monthStart, monthEnd)));
       const totalBillsDueThisMonth = round2(monthBills.reduce((s, x) => s + (x.amount || 0), 0));
@@ -667,7 +665,7 @@
         const label = new Date(selectedYear, selectedMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
         const payload = {
-          version: 6,
+          version: 7,
           exportedAt: new Date().toISOString(),
           selectedYear,
           selectedMonth,
@@ -994,6 +992,8 @@
       // ✅ Expenses are "living", so show them steady weekly (based on selected month)
       const monthWeeksCount = Math.max(1, countCustomWeeksInMonth());
       const monthlyBucketsWeeklySplit = round2(monthlyBucketTotalOnly / monthWeeksCount);
+      const weeklyExpensesPlanned = round2(weeklyBucketTotalOnly + monthlyBucketsWeeklySplit);
+      const monthlyExpensesPlanned = round2(totalMonthlyBudgeted);
 
       // ✅ Smart bills funding plan:
       // - If there are mixed pay frequencies (not all weekly), allocate bills across EACH income's paydays
@@ -1080,9 +1080,12 @@
         // steady expenses weekly (living)
         const monthlyExpensesSinkingFundThisWeek = monthlyBucketsWeeklySplit;
 
-        const plannedWeeklyExpenses = round2(
-          weeklyBucketTotalOnly + monthlyExpensesSinkingFundThisWeek + yearlyBillsWeeklyReserve
-        );
+        const plannedExpensesThisWeek = round2(weeklyBucketTotalOnly + monthlyExpensesSinkingFundThisWeek);
+
+        // bills "weekly version" (based on paychecks) + annual reserve
+        const plannedBillsSaveThisWeek = round2(billsSinkingFundThisWeek + yearlyBillsWeeklyReserve);
+
+        const netAfterPlan = round2(totals.income - plannedBillsSaveThisWeek - plannedExpensesThisWeek);
 
         const actualSpent = spendingTotalInRange(s, e);
 
@@ -1093,15 +1096,71 @@
           events,
           totals,
           paycheckCount,
+
+          // actual bills due in that week (from schedule)
           billsDueThisWeek,
+
+          // bills saving plan based on paychecks
           billsSinkingFundThisWeek,
           annualReserve: yearlyBillsWeeklyReserve,
+          plannedBillsSaveThisWeek,
+
+          // expenses plan weekly version
           monthlyExpenseSplitThisWeek: monthlyExpensesSinkingFundThisWeek,
-          plannedWeeklyExpenses,
+          plannedExpensesThisWeek,
+
+          // final plan net
+          netAfterPlan,
+
+          // actual spend from transactions
           actualSpent,
+
           usingSmartBillsFunding: billsFundingPlan.enabled
         };
       });
+
+      // ---------------- Summary math user asked for ----------------
+      const monthlyNetAfterPlan = round2(totalMonthlyIncome - totalBillsDueThisMonth - monthlyExpensesPlanned);
+
+      const thisWeekNetAfterActualBillsAndPlannedExpenses = round2(
+        thisWeekTotals.income - thisWeekTotals.bills - weeklyExpensesPlanned
+      );
+      const nextWeekNetAfterActualBillsAndPlannedExpenses = round2(
+        nextWeekTotals.income - nextWeekTotals.bills - weeklyExpensesPlanned
+      );
+
+      // Bills funding helper: describe pattern + show amounts
+      const getFundingPattern = () => {
+        const incomes = recurringIncome
+          .filter(i => i.frequency !== "once")
+          .filter(i => {
+            if ((i.frequency === "weekly" || i.frequency === "biweekly") && !parseYMDLocal(i.nextDate)) return false;
+            return true;
+          });
+
+        const freqs = Array.from(new Set(incomes.map(i => i.frequency)));
+        const allWeekly = incomes.length > 0 && incomes.every(i => i.frequency === "weekly");
+        const allBiweekly = incomes.length > 0 && incomes.every(i => i.frequency === "biweekly");
+        const allMonthly = incomes.length > 0 && incomes.every(i => i.frequency === "monthly");
+        const mixed = incomes.length > 0 && !allWeekly && !allBiweekly && !allMonthly;
+
+        return { incomes, freqs, allWeekly, allBiweekly, allMonthly, mixed };
+      };
+
+      const fundingPattern = getFundingPattern();
+      const thisWeekFundingPaychecks = listFundingPaychecksInRange(thisWeekStart, thisWeekEnd);
+      const nextWeekFundingPaychecks = listFundingPaychecksInRange(nextWeekStart, nextWeekEnd);
+
+      const thisWeekBillsSave = billsFundingPlan.enabled
+        ? round2(thisWeekFundingPaychecks.reduce((s,p)=> s + (Number(billsFundingPlan.perPaycheckBills?.[p.sourceId])||0), 0))
+        : round2(perPaycheckSetAsideForBills * thisWeekFundingPaychecks.length);
+
+      const nextWeekBillsSave = billsFundingPlan.enabled
+        ? round2(nextWeekFundingPaychecks.reduce((s,p)=> s + (Number(billsFundingPlan.perPaycheckBills?.[p.sourceId])||0), 0))
+        : round2(perPaycheckSetAsideForBills * nextWeekFundingPaychecks.length);
+
+      const annualReserveThisWeek = yearlyBillsWeeklyReserve;
+      const annualReserveNextWeek = yearlyBillsWeeklyReserve;
 
       // ---------------- Render ----------------
       return (
@@ -1210,13 +1269,15 @@
             {/* -------------------- SUMMARY -------------------- */}
             {activeTab === "summary" && (
               <section className="space-y-4">
+                {/* Month-level summary (requested) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                  <StatCard label="Income (this month)" value={currency(totalMonthlyIncome)} sub="Counts ALL paydays inside this month" tone="emerald" />
-                  <StatCard label="Bills (monthly est.)" value={`-${currency(totalMonthlyBills).slice(1)}`} sub="Weekly bills count occurrences in this month (yearly prorated)" tone="rose" />
-                  <StatCard label="Spent (this month/week)" value={`-${currency(totalMonthlySpent).slice(1)}`} sub="Monthly buckets = month • Weekly = this week" tone="rose" />
-                  <StatCard label="Remaining now" value={currency(monthlyRemaining)} sub="Income − Bills − Spent" tone={monthlyRemaining >= 0 ? "emerald" : "rose"} />
+                  <StatCard label="Income (this month)" value={currency(totalMonthlyIncome)} sub="Counts paydays inside selected month" tone="emerald" />
+                  <StatCard label="Bills due (this month)" value={`-${currency(totalBillsDueThisMonth).slice(1)}`} sub="Actual scheduled bills inside selected month" tone="rose" />
+                  <StatCard label="Expenses plan (this month)" value={`-${currency(monthlyExpensesPlanned).slice(1)}`} sub="Based on your bucket budgets" tone="rose" />
+                  <StatCard label="Net after bills + expenses" value={currency(monthlyNetAfterPlan)} sub="Income − Bills Due − Expenses Plan" tone={monthlyNetAfterPlan >= 0 ? "emerald" : "rose"} />
                 </div>
 
+                {/* Week-of + Next week sections (requested) */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <Card className="p-4">
                     <div className="flex items-start justify-between">
@@ -1225,22 +1286,26 @@
                         <div className="text-xs text-slate-500 mt-1">{fmtDate(thisWeekStart)} → {fmtDate(thisWeekEnd)}</div>
                       </div>
                       <Pill className="bg-slate-50 text-slate-700 border-slate-200">
-                        Leftover: <span className="ml-1 font-semibold">{currency(thisWeekTotals.leftover)}</span>
+                        Net after: <span className="ml-1 font-semibold">{currency(thisWeekNetAfterActualBillsAndPlannedExpenses)}</span>
                       </Pill>
                     </div>
 
-                    <div className="mt-3 grid grid-cols-3 gap-2">
+                    <div className="mt-3 grid grid-cols-4 gap-2">
                       <div className="p-3 rounded-xl border border-emerald-100 bg-emerald-50">
                         <div className="text-xs text-emerald-700 font-semibold">Income</div>
                         <div className="text-lg font-extrabold text-emerald-800">{currency(thisWeekTotals.income)}</div>
                       </div>
                       <div className="p-3 rounded-xl border border-rose-100 bg-rose-50">
-                        <div className="text-xs text-rose-700 font-semibold">Bills</div>
+                        <div className="text-xs text-rose-700 font-semibold">Bills due</div>
                         <div className="text-lg font-extrabold text-rose-800">-{currency(thisWeekTotals.bills).slice(1)}</div>
+                      </div>
+                      <div className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                        <div className="text-xs text-slate-600 font-semibold">Expenses (weekly)</div>
+                        <div className="text-lg font-extrabold text-slate-800">-{currency(weeklyExpensesPlanned).slice(1)}</div>
                       </div>
                       <div className="p-3 rounded-xl border border-indigo-100 bg-indigo-50">
                         <div className="text-xs text-indigo-700 font-semibold">Net</div>
-                        <div className="text-lg font-extrabold text-indigo-800">{currency(thisWeekTotals.leftover)}</div>
+                        <div className="text-lg font-extrabold text-indigo-800">{currency(thisWeekNetAfterActualBillsAndPlannedExpenses)}</div>
                       </div>
                     </div>
 
@@ -1271,22 +1336,26 @@
                         <div className="text-xs text-slate-500 mt-1">{fmtDate(nextWeekStart)} → {fmtDate(nextWeekEnd)}</div>
                       </div>
                       <Pill className="bg-slate-50 text-slate-700 border-slate-200">
-                        Leftover: <span className="ml-1 font-semibold">{currency(nextWeekTotals.leftover)}</span>
+                        Net after: <span className="ml-1 font-semibold">{currency(nextWeekNetAfterActualBillsAndPlannedExpenses)}</span>
                       </Pill>
                     </div>
 
-                    <div className="mt-3 grid grid-cols-3 gap-2">
+                    <div className="mt-3 grid grid-cols-4 gap-2">
                       <div className="p-3 rounded-xl border border-emerald-100 bg-emerald-50">
                         <div className="text-xs text-emerald-700 font-semibold">Income</div>
                         <div className="text-lg font-extrabold text-emerald-800">{currency(nextWeekTotals.income)}</div>
                       </div>
                       <div className="p-3 rounded-xl border border-rose-100 bg-rose-50">
-                        <div className="text-xs text-rose-700 font-semibold">Bills</div>
+                        <div className="text-xs text-rose-700 font-semibold">Bills due</div>
                         <div className="text-lg font-extrabold text-rose-800">-{currency(nextWeekTotals.bills).slice(1)}</div>
+                      </div>
+                      <div className="p-3 rounded-xl border border-slate-100 bg-slate-50">
+                        <div className="text-xs text-slate-600 font-semibold">Expenses (weekly)</div>
+                        <div className="text-lg font-extrabold text-slate-800">-{currency(weeklyExpensesPlanned).slice(1)}</div>
                       </div>
                       <div className="p-3 rounded-xl border border-indigo-100 bg-indigo-50">
                         <div className="text-xs text-indigo-700 font-semibold">Net</div>
-                        <div className="text-lg font-extrabold text-indigo-800">{currency(nextWeekTotals.leftover)}</div>
+                        <div className="text-lg font-extrabold text-indigo-800">{currency(nextWeekNetAfterActualBillsAndPlannedExpenses)}</div>
                       </div>
                     </div>
 
@@ -1311,82 +1380,16 @@
                   </Card>
                 </div>
 
+                {/* Bills funding (requested "best way to save based on paychecks") + transactions quick stats */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                   <Card className="lg:col-span-2 p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h2 className="text-lg font-extrabold text-slate-800">Buckets at a glance</h2>
-                        <div className="text-xs text-slate-500 mt-1">
-                          Monthly buckets show {monthKey}. Weekly buckets show {fmtDate(weekStart)} → {fmtDate(weekEnd)}.
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xs text-slate-500">If all budgets spent</div>
-                        <div className={`text-lg font-extrabold ${projectedRemaining >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                          {currency(projectedRemaining)}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
-                            <th className="py-2 pr-2">Bucket</th>
-                            <th className="py-2 pr-2">Period</th>
-                            <th className="py-2 pr-2">Budget</th>
-                            <th className="py-2 pr-2">Spent</th>
-                            <th className="py-2 pr-2">Remaining</th>
-                            <th className="py-2">Progress</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {bucketsWithSpent.map(b => {
-                            const remaining = round2((b.budgeted || 0) - (b.spent || 0));
-                            const pct = b.budgeted > 0 ? clamp((b.spent / b.budgeted) * 100, 0, 130) : 0;
-                            return (
-                              <tr key={b.id} className="border-t border-slate-100">
-                                <td className="py-3 pr-2 font-semibold text-slate-800">{b.name}</td>
-                                <td className="py-3 pr-2">
-                                  <span className={`text-xs px-2 py-0.5 rounded-full border ${
-                                    b.period === "weekly" ? "bg-sky-50 text-sky-700 border-sky-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                  }`}>
-                                    {b.period}
-                                  </span>
-                                </td>
-                                <td className="py-3 pr-2 text-slate-700">{currency(b.budgeted)}</td>
-                                <td className="py-3 pr-2 text-slate-700">{currency(b.spent)}</td>
-                                <td className={`py-3 pr-2 font-semibold ${remaining >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
-                                  {currency(remaining)}
-                                </td>
-                                <td className="py-3">
-                                  <div className="w-full bg-slate-100 h-2 rounded overflow-hidden">
-                                    <div className={`${getProgressColor(b.spent, b.budgeted)} h-2`} style={{ width: `${Math.min(100, pct)}%` }} />
-                                  </div>
-                                  <div className="text-xs text-slate-500 mt-1">{Math.round(Math.min(100, pct))}%</div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <div className="mt-4 p-3 rounded-xl border border-slate-100 bg-slate-50">
-                      <div className="text-xs text-slate-500">This month transactions</div>
-                      <div className="mt-1 flex items-end justify-between">
-                        <div className="text-2xl font-extrabold text-slate-800">{monthTxCount}</div>
-                        <div className="text-sm font-semibold text-slate-700">{currency(monthTxTotal)}</div>
-                      </div>
-                    </div>
-                  </Card>
-
-                  <Card className="p-4">
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <h2 className="text-lg font-extrabold text-slate-800">Bills funding</h2>
                         <div className="text-xs text-slate-500 mt-1">
                           Bills due this month (actual): <span className="font-semibold text-slate-700">{currency(totalBillsDueThisMonth)}</span>
+                          <span className="text-slate-400"> · </span>
+                          Annual reserve: <span className="font-semibold text-slate-700">{currency(yearlyBillsWeeklyReserve)}</span><span className="text-slate-500">/week</span>
                         </div>
                       </div>
                       {usedFallbackPaydays && (
@@ -1394,30 +1397,164 @@
                       )}
                     </div>
 
-                    <div className="mt-4 p-3 rounded-2xl border border-indigo-100 bg-indigo-50">
-                      <div className="text-xs uppercase tracking-wide text-indigo-700 font-semibold">Set aside per paycheck</div>
-                      <div className="mt-1 text-3xl font-extrabold text-indigo-800">{currency(perPaycheckSetAsideForBills)}</div>
-                      <div className="text-xs text-indigo-700 mt-2">
-                        {currency(totalBillsDueThisMonth)} ÷ {paydaysThisMonth} paychecks
-                      </div>
+                    {/* Strategy box */}
+                    <div className="mt-4 p-4 rounded-2xl border border-indigo-100 bg-indigo-50">
+                      <div className="text-xs uppercase tracking-wide text-indigo-700 font-semibold">Best way to save (based on paychecks)</div>
+
+                      {/* Case A: all weekly */}
+                      {fundingPattern.allWeekly && (
+                        <>
+                          <div className="mt-2 text-sm text-indigo-900">
+                            Everyone is paid <span className="font-semibold">weekly</span> → save a steady amount each week.
+                          </div>
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div className="p-3 rounded-xl bg-white border border-indigo-100">
+                              <div className="text-xs text-slate-500">Bills (per week)</div>
+                              <div className="text-xl font-extrabold text-indigo-800">{currency(perPaycheckSetAsideForBills)}</div>
+                            </div>
+                            <div className="p-3 rounded-xl bg-white border border-indigo-100">
+                              <div className="text-xs text-slate-500">Annual reserve (per week)</div>
+                              <div className="text-xl font-extrabold text-indigo-800">{currency(yearlyBillsWeeklyReserve)}</div>
+                            </div>
+                            <div className="p-3 rounded-xl bg-white border border-indigo-100">
+                              <div className="text-xs text-slate-500">Total to save (per week)</div>
+                              <div className="text-xl font-extrabold text-indigo-800">{currency(round2(perPaycheckSetAsideForBills + yearlyBillsWeeklyReserve))}</div>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {/* Case B: all biweekly */}
+                      {fundingPattern.allBiweekly && (
+                        <>
+                          <div className="mt-2 text-sm text-indigo-900">
+                            Everyone is paid <span className="font-semibold">bi-weekly</span> → save per paycheck.
+                          </div>
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div className="p-3 rounded-xl bg-white border border-indigo-100">
+                              <div className="text-xs text-slate-500">Bills (per paycheck)</div>
+                              <div className="text-xl font-extrabold text-indigo-800">{currency(perPaycheckSetAsideForBills)}</div>
+                            </div>
+                            <div className="p-3 rounded-xl bg-white border border-indigo-100">
+                              <div className="text-xs text-slate-500">Annual reserve (per paycheck)</div>
+                              <div className="text-xl font-extrabold text-indigo-800">{currency(round2(yearlyBillsWeeklyReserve * 2))}</div>
+                            </div>
+                            <div className="p-3 rounded-xl bg-white border border-indigo-100">
+                              <div className="text-xs text-slate-500">Total to save (per paycheck)</div>
+                              <div className="text-xl font-extrabold text-indigo-800">{currency(round2(perPaycheckSetAsideForBills + (yearlyBillsWeeklyReserve * 2)))}</div>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {/* Mixed / smart plan */}
+                      {(fundingPattern.mixed || (!fundingPattern.allWeekly && !fundingPattern.allBiweekly)) && (
+                        <>
+                          <div className="mt-2 text-sm text-indigo-900">
+                            Mixed pay schedules → save based on the paychecks that actually hit each week.
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
+                            <div className="p-3 rounded-xl bg-white border border-indigo-100">
+                              <div className="text-xs text-slate-500 font-semibold">Per paycheck (by income)</div>
+                              <div className="mt-2 space-y-1 text-sm text-slate-700">
+                                {billsFundingPlan.enabled ? (
+                                  billsFundingPlan.incomes.map(i => (
+                                    <div key={i.id} className="flex justify-between">
+                                      <span className="truncate">{i.name} <span className="text-slate-400">· {i.frequency}</span></span>
+                                      <span className="font-extrabold text-indigo-800">{currency(billsFundingPlan.perPaycheckBills?.[i.id] || 0)}</span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="text-sm text-slate-600">Add anchor dates to weekly/biweekly income to enable smart funding.</div>
+                                )}
+                              </div>
+                              <div className="mt-2 text-xs text-slate-500">
+                                Annual reserve stays: <span className="font-semibold">{currency(yearlyBillsWeeklyReserve)}</span>/week.
+                              </div>
+                            </div>
+
+                            <div className="p-3 rounded-xl bg-white border border-indigo-100">
+                              <div className="text-xs text-slate-500 font-semibold">What to save this week vs next week</div>
+                              <div className="mt-2 space-y-2 text-sm text-slate-700">
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <div className="flex justify-between">
+                                    <span>This week bills-save (from paychecks)</span>
+                                    <span className="font-extrabold text-indigo-800">{currency(thisWeekBillsSave)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>+ annual reserve</span>
+                                    <span className="font-extrabold text-indigo-800">{currency(annualReserveThisWeek)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="font-semibold">Total to save</span>
+                                    <span className="font-extrabold text-indigo-900">{currency(round2(thisWeekBillsSave + annualReserveThisWeek))}</span>
+                                  </div>
+                                </div>
+
+                                <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                                  <div className="flex justify-between">
+                                    <span>Next week bills-save (from paychecks)</span>
+                                    <span className="font-extrabold text-indigo-800">{currency(nextWeekBillsSave)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>+ annual reserve</span>
+                                    <span className="font-extrabold text-indigo-800">{currency(annualReserveNextWeek)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="font-semibold">Total to save</span>
+                                    <span className="font-extrabold text-indigo-900">{currency(round2(nextWeekBillsSave + annualReserveNextWeek))}</span>
+                                  </div>
+                                </div>
+
+                                <div className="text-xs text-slate-500">
+                                  This uses the paychecks that land inside each week, so weeks with two paychecks naturally “save more.”
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
 
-                    <div className="mt-4 space-y-2">
-                      {monthBills.length === 0 ? (
-                        <div className="text-sm text-slate-500">No bills scheduled in this month.</div>
-                      ) : monthBills.slice(0, 12).map(e => (
-                        <div key={e.id} className="flex items-center justify-between text-sm">
-                          <div className="text-slate-700">
-                            <span className="font-semibold">{niceDate(e.date)}</span>
-                            <span className="text-slate-400"> · </span>
-                            {e.name}
+                    <div className="mt-4">
+                      <div className="text-xs uppercase tracking-wide text-slate-500 font-semibold">Bills due this month</div>
+                      <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {monthBills.length === 0 ? (
+                          <div className="text-sm text-slate-500">No bills scheduled in this month.</div>
+                        ) : monthBills.slice(0, 12).map(e => (
+                          <div key={e.id} className="flex items-center justify-between text-sm p-2 rounded-lg border border-slate-100 bg-slate-50">
+                            <div className="text-slate-700">
+                              <span className="font-semibold">{niceDate(e.date)}</span>
+                              <span className="text-slate-400"> · </span>
+                              {e.name}
+                            </div>
+                            <div className="font-extrabold text-rose-700">-{currency(e.amount).slice(1)}</div>
                           </div>
-                          <div className="font-extrabold text-rose-700">-{currency(e.amount).slice(1)}</div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                       {monthBills.length > 12 && (
-                        <div className="text-xs text-slate-500">…and {monthBills.length - 12} more bills this month</div>
+                        <div className="mt-2 text-xs text-slate-500">…and {monthBills.length - 12} more bills this month</div>
                       )}
+                    </div>
+                  </Card>
+
+                  <Card className="p-4">
+                    <div className="text-xs text-slate-500">This month transactions</div>
+                    <div className="mt-2 flex items-end justify-between">
+                      <div>
+                        <div className="text-3xl font-extrabold text-slate-800">{monthTxCount}</div>
+                        <div className="text-xs text-slate-500 mt-1">Count in selected month</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs text-slate-500">Actual spending total</div>
+                        <div className="text-xl font-extrabold text-slate-800">{currency(monthTxTotal)}</div>
+                      </div>
+                    </div>
+                    <div className="mt-4 p-3 rounded-xl border border-slate-100 bg-slate-50">
+                      <div className="text-xs text-slate-500">Actual spent so far</div>
+                      <div className="mt-1 text-lg font-extrabold text-slate-800">{currency(totalMonthlySpent)}</div>
+                      <div className="text-xs text-slate-500 mt-1">This is from transactions (not budgets).</div>
                     </div>
                   </Card>
                 </div>
@@ -1432,7 +1569,7 @@
                     <div>
                       <h2 className="text-xl font-extrabold text-slate-800">Weekly Summary (Next 4 weeks)</h2>
                       <div className="text-xs text-slate-500 mt-1">
-                        Bills set-aside follows each paycheck’s schedule when pay frequencies differ (weekly/biweekly/monthly). Expenses are shown steady weekly.
+                        Each week shows: total income, <span className="font-semibold">bills saving plan (based on paychecks)</span>, weekly expenses plan, and the net after both. Below that: actual bills due + total.
                       </div>
                     </div>
                     {usedFallbackPaydays && (
@@ -1459,21 +1596,24 @@
                         <Pill className="bg-emerald-50 text-emerald-700 border-emerald-200">
                           Income: <span className="ml-1 font-semibold">{currency(w.totals.income)}</span>
                         </Pill>
-                        <Pill className="bg-rose-50 text-rose-700 border-rose-200">
-                          Bills due: <span className="ml-1 font-semibold">-{currency(w.billsDueThisWeek).slice(1)}</span>
+                        <Pill className="bg-indigo-50 text-indigo-700 border-indigo-200">
+                          Bills save: <span className="ml-1 font-semibold">-{currency(w.plannedBillsSaveThisWeek).slice(1)}</span>
+                        </Pill>
+                        <Pill className="bg-slate-50 text-slate-700 border-slate-200">
+                          Expenses: <span className="ml-1 font-semibold">-{currency(w.plannedExpensesThisWeek).slice(1)}</span>
                         </Pill>
                         <Pill className="bg-indigo-50 text-indigo-700 border-indigo-200">
-                          Net (sched): <span className="ml-1 font-semibold">{currency(w.totals.leftover)}</span>
+                          Net after: <span className="ml-1 font-semibold">{currency(w.netAfterPlan)}</span>
                         </Pill>
                       </div>
                     </div>
 
                     <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-3">
                       <div className="p-3 rounded-2xl border border-slate-100 bg-slate-50">
-                        <div className="text-xs uppercase tracking-wide text-slate-600 font-semibold">Bills funding</div>
+                        <div className="text-xs uppercase tracking-wide text-slate-600 font-semibold">Bills (weekly version)</div>
                         <div className="mt-2 space-y-1 text-sm text-slate-700">
                           <div className="flex justify-between">
-                            <span>Set aside (this week)</span>
+                            <span>From paychecks (this week)</span>
                             <span className="font-extrabold text-indigo-700">{currency(w.billsSinkingFundThisWeek)}</span>
                           </div>
                           <div className="flex justify-between">
@@ -1481,69 +1621,76 @@
                             <span className="font-extrabold text-indigo-700">{currency(w.annualReserve)}</span>
                           </div>
                           <div className="flex justify-between">
-                            <span>Bills due (actual)</span>
-                            <span className="font-extrabold text-rose-700">-{currency(w.billsDueThisWeek).slice(1)}</span>
+                            <span className="font-semibold">Total bills to save</span>
+                            <span className="font-extrabold text-indigo-900">{currency(w.plannedBillsSaveThisWeek)}</span>
                           </div>
                         </div>
                       </div>
 
                       <div className="p-3 rounded-2xl border border-slate-100 bg-slate-50">
-                        <div className="text-xs uppercase tracking-wide text-slate-600 font-semibold">Expenses plan</div>
+                        <div className="text-xs uppercase tracking-wide text-slate-600 font-semibold">Expenses (weekly version)</div>
                         <div className="mt-2 space-y-1 text-sm text-slate-700">
                           <div className="flex justify-between">
-                            <span>Weekly buckets budget</span>
+                            <span>Weekly buckets</span>
                             <span className="font-extrabold">{currency(weeklyBucketTotalOnly)}</span>
                           </div>
                           <div className="flex justify-between">
-                            <span>Monthly buckets (weekly split)</span>
+                            <span>Monthly buckets (split)</span>
                             <span className="font-extrabold">{currency(w.monthlyExpenseSplitThisWeek)}</span>
                           </div>
                           <div className="flex justify-between">
-                            <span>Planned total</span>
-                            <span className="font-extrabold text-slate-800">{currency(w.plannedWeeklyExpenses)}</span>
+                            <span className="font-semibold">Total expenses plan</span>
+                            <span className="font-extrabold text-slate-800">{currency(w.plannedExpensesThisWeek)}</span>
                           </div>
                         </div>
                         <div className="mt-3 text-xs text-slate-500">
-                          Monthly buckets are split evenly across {monthWeeksCount} weeks in the selected month.
+                          Monthly buckets split evenly across {monthWeeksCount} weeks in the selected month.
                         </div>
                       </div>
 
                       <div className="p-3 rounded-2xl border border-slate-100 bg-slate-50">
-                        <div className="text-xs uppercase tracking-wide text-slate-600 font-semibold">Actual spending</div>
+                        <div className="text-xs uppercase tracking-wide text-slate-600 font-semibold">Net after plan</div>
                         <div className="mt-2">
-                          <div className="text-3xl font-extrabold text-slate-800">{currency(w.actualSpent)}</div>
-                          <div className="text-xs text-slate-500 mt-1">From transactions dated inside this week</div>
+                          <div className={`text-3xl font-extrabold ${w.netAfterPlan >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{currency(w.netAfterPlan)}</div>
+                          <div className="text-xs text-slate-500 mt-1">Income − Bills Save − Expenses Plan</div>
+                        </div>
+                        <div className="mt-3 text-xs text-slate-500">
+                          (Actual spending in this week from transactions: <span className="font-semibold">{currency(w.actualSpent)}</span>)
                         </div>
                       </div>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
-                      <div className="p-3 rounded-2xl border border-emerald-100 bg-emerald-50">
-                        <div className="text-xs uppercase tracking-wide text-emerald-700 font-semibold">Income this week</div>
-                        <div className="mt-2 space-y-1 text-sm text-emerald-900">
-                          {w.events.filter(x => x.type === "income").length === 0 ? (
-                            <div className="text-sm text-emerald-800/70">No income scheduled.</div>
-                          ) : w.events.filter(x => x.type === "income").map(ev => (
-                            <div key={ev.id} className="flex justify-between">
-                              <span><span className="font-semibold">{niceDate(ev.date)}</span> · {ev.name}</span>
-                              <span className="font-extrabold">{currency(ev.amount)}</span>
-                            </div>
-                          ))}
-                        </div>
+                    {/* Below: actual bills due + total (requested) */}
+                    <div className="mt-4 p-3 rounded-2xl border border-rose-100 bg-rose-50">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs uppercase tracking-wide text-rose-700 font-semibold">Actual bills due this week</div>
+                        <div className="text-sm font-extrabold text-rose-800">Total: -{currency(w.billsDueThisWeek).slice(1)}</div>
                       </div>
 
-                      <div className="p-3 rounded-2xl border border-rose-100 bg-rose-50">
-                        <div className="text-xs uppercase tracking-wide text-rose-700 font-semibold">Bills due this week</div>
-                        <div className="mt-2 space-y-1 text-sm text-rose-900">
-                          {w.events.filter(x => x.type === "bill").length === 0 ? (
-                            <div className="text-sm text-rose-800/70">No bills scheduled.</div>
-                          ) : w.events.filter(x => x.type === "bill").map(ev => (
-                            <div key={ev.id} className="flex justify-between">
-                              <span><span className="font-semibold">{niceDate(ev.date)}</span> · {ev.name}</span>
-                              <span className="font-extrabold">-{currency(ev.amount).slice(1)}</span>
-                            </div>
-                          ))}
-                        </div>
+                      <div className="mt-2 space-y-1 text-sm text-rose-900">
+                        {w.events.filter(x => x.type === "bill").length === 0 ? (
+                          <div className="text-sm text-rose-800/70">No bills scheduled.</div>
+                        ) : w.events.filter(x => x.type === "bill").map(ev => (
+                          <div key={ev.id} className="flex justify-between">
+                            <span><span className="font-semibold">{niceDate(ev.date)}</span> · {ev.name}</span>
+                            <span className="font-extrabold">-{currency(ev.amount).slice(1)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Optional: show income list for the week */}
+                    <div className="mt-3 p-3 rounded-2xl border border-emerald-100 bg-emerald-50">
+                      <div className="text-xs uppercase tracking-wide text-emerald-700 font-semibold">Income scheduled this week</div>
+                      <div className="mt-2 space-y-1 text-sm text-emerald-900">
+                        {w.events.filter(x => x.type === "income").length === 0 ? (
+                          <div className="text-sm text-emerald-800/70">No income scheduled.</div>
+                        ) : w.events.filter(x => x.type === "income").map(ev => (
+                          <div key={ev.id} className="flex justify-between">
+                            <span><span className="font-semibold">{niceDate(ev.date)}</span> · {ev.name}</span>
+                            <span className="font-extrabold">{currency(ev.amount)}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </Card>
