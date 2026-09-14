@@ -1,85 +1,89 @@
 import { useState } from "react";
 import { useStore } from "../store";
-import { Button, Card, Empty, Field, FREQ_OPTIONS, Money, StatusPill } from "../components/ui";
+import { Button, Card, Empty, Field, FREQ_OPTIONS, Money, Pill } from "../components/ui";
 import { Confirm, Modal } from "../components/Layout";
-import { billOccurrences, overdueItems } from "../lib/calculations";
-import { formatNiceDate, monthBounds, todayYmd } from "../lib/dates";
+import {
+  activeBillsSorted,
+  billCoveredInBucket,
+  daysUntilDue,
+  groupBillsByDate,
+  mainIncomeSource,
+  recommendedPerPaycheck,
+} from "../lib/calculations";
 import { createId } from "../lib/ids";
 import { stamp } from "../lib/defaults";
 import { parseDollarsToCents } from "../lib/money";
-import type { Bill } from "../lib/types";
+import { FREQUENCY_LABEL, type Bill, type Frequency } from "../lib/types";
+import { todayYmd } from "../lib/dates";
 
 export function BillsPage() {
-  const { state, saveBill, removeBill, markBillPaid, skipOccurrence, locked } = useStore();
+  const { state, saveBill, removeBill, payBill, skipBill } = useStore();
   const today = todayYmd();
-  const { startYmd, endYmd } = monthBounds(state.currentMonth);
-  const items = billOccurrences(state, startYmd, endYmd, today);
-  const overdue = overdueItems(state, today).filter((o) => o.kind === "bill");
+  const bills = activeBillsSorted(state);
+  const groups = groupBillsByDate(bills, today);
+  const pay = mainIncomeSource(state);
   const [edit, setEdit] = useState<Partial<Bill> | null>(null);
-  const [pay, setPay] = useState<{ billId: string; date: string; amount: string } | null>(null);
+  const [payModal, setPayModal] = useState<{ id: string; amount: string } | null>(null);
   const [del, setDel] = useState<string | null>(null);
-
-  const blank = (): Partial<Bill> => ({
-    name: "", expectedCents: 0, dueDate: today, frequency: "monthly", categoryId: null, autopay: false, active: true, notes: "", accountId: state.accounts[0]?.id ?? null, debtId: null, paymentMethod: "",
-  });
 
   return (
     <div className="stack">
       <div className="between">
-        <p className="muted">Check off each occurrence when you pay it. Actual amounts can differ from expected.</p>
-        <Button variant="primary" disabled={locked} onClick={() => setEdit(blank())}>Add bill</Button>
+        <p className="muted">Sorted by next due date. Paying a bill spends from its bucket and advances the schedule.</p>
+        <Button variant="primary" onClick={() => setEdit({ name: "", amountCents: 0, frequency: "monthly", nextDueDate: today, secondDay: null, bucketId: state.expenseBuckets[0]?.id ?? null, active: true, notes: "" })}>Add bill</Button>
       </div>
-      {overdue.length > 0 ? (
+
+      {pay ? (
         <Card>
-          <h2>Overdue</h2>
-          {overdue.map((o) => (
-            <div key={o.key} className="item">
-              <div>
-                <div className="name">{o.name}</div>
-                <div className="tiny muted">Due {formatNiceDate(o.date)} · {Math.max(0, Math.round((Date.parse(today) - Date.parse(o.date)) / 86400000))} days overdue</div>
-              </div>
-              <div className="row">
-                <Money cents={o.amountCents} />
-                <Button variant="primary" disabled={locked} onClick={() => setPay({ billId: o.sourceId, date: o.date, amount: (o.amountCents / 100).toFixed(2) })}>Mark paid</Button>
-              </div>
+          <h2>Bill funding (recommendation)</h2>
+          <p className="tiny muted">
+            With {FREQUENCY_LABEL[pay.frequency].toLowerCase()} income, a monthly bill is estimated as amount × 12 ÷ {pay.frequency === "biweekly" ? "26" : "paychecks per year"}. These are suggested set-asides, not required allocations.
+          </p>
+          {bills.filter((b) => b.frequency !== "once").slice(0, 8).map((b) => (
+            <div key={b.id} className="between">
+              <span>{b.name}</span>
+              <span className="tiny">~ <Money cents={recommendedPerPaycheck(b, pay.frequency)} /> / paycheck</span>
             </div>
           ))}
         </Card>
       ) : null}
+
+      {groups.length === 0 ? <Empty title="No bills yet" hint="Add rent, utilities, insurance, and subscriptions." /> : groups.map((g) => (
+        <div key={g.date}>
+          <div className="date-head">{g.label}</div>
+          {g.bills.map((b) => {
+            const days = daysUntilDue(b.nextDueDate, today);
+            const funded = billCoveredInBucket(state, b);
+            return (
+              <div key={b.id} className="item" style={{ marginBottom: 8 }}>
+                <div>
+                  <div className="name">{b.name}</div>
+                  <div className="tiny muted">
+                    {FREQUENCY_LABEL[b.frequency]} · {days === 0 ? "due today" : days < 0 ? `${Math.abs(days)} days overdue` : `${days} days`}
+                    {" · "}
+                    {funded ? "money is in the bucket" : "needed amount is not fully in the bucket"}
+                  </div>
+                </div>
+                <div className="row">
+                  <Money cents={b.amountCents} />
+                  <Pill tone={funded ? "good" : days < 0 ? "bad" : "warn"}>{funded ? "funded" : "needs $"}</Pill>
+                  <Button variant="primary" onClick={() => setPayModal({ id: b.id, amount: (b.amountCents / 100).toFixed(2) })}>Pay</Button>
+                  <Button variant="ghost" onClick={() => skipBill(b.id)}>Skip</Button>
+                  <Button variant="small" onClick={() => setEdit(b)}>Edit</Button>
+                  <Button variant="small" onClick={() => setDel(b.id)}>Delete</Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+
       <Card>
-        <h2>This month</h2>
-        {items.length === 0 ? <Empty title="No bills this month" /> : items.map((b) => (
-          <div key={b.key} className="item">
-            <div>
-              <div className="name">{b.name}</div>
-              <div className="tiny muted">{formatNiceDate(b.date)} {b.autopay ? "· Autopay" : ""}</div>
-            </div>
-            <div className="row">
-              <StatusPill status={b.status} />
-              <Money cents={b.amountCents} />
-              {b.status !== "paid" && b.status !== "skipped" ? (
-                <>
-                  <Button variant="primary" disabled={locked} onClick={() => setPay({ billId: b.sourceId, date: b.date, amount: (b.amountCents / 100).toFixed(2) })}>Mark paid</Button>
-                  <Button variant="ghost" disabled={locked} onClick={() => skipOccurrence("bill", b.sourceId, b.date)}>Skip</Button>
-                </>
-              ) : null}
-            </div>
-          </div>
-        ))}
-      </Card>
-      <Card>
-        <h2>Bill templates</h2>
-        {state.bills.length === 0 ? <Empty title="No bills yet" hint="Add mortgage, utilities, insurance, and subscriptions." /> : state.bills.map((b) => (
+        <h2>Inactive</h2>
+        {state.bills.filter((b) => !b.active).length === 0 ? <div className="muted">None</div> : state.bills.filter((b) => !b.active).map((b) => (
           <div key={b.id} className="item">
-            <div>
-              <div className="name">{b.name} {b.active ? "" : "(inactive)"}</div>
-              <div className="tiny muted">{b.frequency} · due {b.dueDate} {b.autopay ? "· autopay" : ""} {b.paymentMethod ? `· ${b.paymentMethod}` : ""}</div>
-            </div>
-            <div className="row">
-              <Money cents={b.expectedCents} />
-              <Button variant="small" onClick={() => setEdit(b)}>Edit</Button>
-              <Button variant="small" className="danger" onClick={() => setDel(b.id)}>Delete</Button>
-            </div>
+            <span>{b.name}</span>
+            <Button variant="small" onClick={() => saveBill({ ...b, active: true })}>Reactivate</Button>
           </div>
         ))}
       </Card>
@@ -91,48 +95,34 @@ export function BillsPage() {
             saveBill({
               id: edit.id || createId("bill"),
               name: edit.name || "Bill",
-              expectedCents: edit.expectedCents || 0,
-              dueDate: edit.dueDate || today,
+              amountCents: edit.amountCents || 0,
               frequency: edit.frequency || "monthly",
-              categoryId: edit.categoryId || null,
-              autopay: !!edit.autopay,
+              nextDueDate: edit.nextDueDate || today,
+              secondDay: edit.frequency === "twice_monthly" ? edit.secondDay ?? 15 : null,
+              bucketId: edit.bucketId || null,
               active: edit.active !== false,
               notes: edit.notes || "",
-              accountId: edit.accountId || null,
-              debtId: edit.debtId || null,
-              paymentMethod: edit.paymentMethod || "",
               ...stamp(),
             });
             setEdit(null);
           }}>
             <Field label="Name" className="full"><input className="input" value={edit.name || ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} required /></Field>
-            <Field label="Expected amount"><input className="input" inputMode="decimal" defaultValue={((edit.expectedCents || 0) / 100).toFixed(2)} onBlur={(e) => setEdit({ ...edit, expectedCents: parseDollarsToCents(e.target.value) })} /></Field>
+            <Field label="Amount"><input className="input" inputMode="decimal" defaultValue={((edit.amountCents || 0) / 100).toFixed(2)} onBlur={(e) => setEdit({ ...edit, amountCents: parseDollarsToCents(e.target.value) })} /></Field>
             <Field label="Frequency">
-              <select className="input" value={edit.frequency || "monthly"} onChange={(e) => setEdit({ ...edit, frequency: e.target.value as Bill["frequency"] })}>
+              <select className="input" value={edit.frequency || "monthly"} onChange={(e) => setEdit({ ...edit, frequency: e.target.value as Frequency })}>
                 {FREQ_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
-            <Field label="Due / next date"><input className="input" type="date" value={edit.dueDate || ""} onChange={(e) => setEdit({ ...edit, dueDate: e.target.value })} /></Field>
-            <Field label="Category">
-              <select className="input" value={edit.categoryId || ""} onChange={(e) => setEdit({ ...edit, categoryId: e.target.value || null })}>
-                <option value="">None</option>
-                {state.categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <Field label="Next due date"><input className="input" type="date" value={edit.nextDueDate || ""} onChange={(e) => setEdit({ ...edit, nextDueDate: e.target.value })} /></Field>
+            {edit.frequency === "twice_monthly" ? (
+              <Field label="Second day of month"><input className="input" type="number" min={1} max={28} value={edit.secondDay ?? 15} onChange={(e) => setEdit({ ...edit, secondDay: Number(e.target.value) })} /></Field>
+            ) : null}
+            <Field label="Pay from bucket" className="full">
+              <select className="input" value={edit.bucketId || ""} onChange={(e) => setEdit({ ...edit, bucketId: e.target.value || null })}>
+                <option value="">Available (unassigned)</option>
+                {state.expenseBuckets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </Field>
-            <Field label="Account">
-              <select className="input" value={edit.accountId || ""} onChange={(e) => setEdit({ ...edit, accountId: e.target.value || null })}>
-                <option value="">None</option>
-                {state.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </Field>
-            <Field label="Linked debt">
-              <select className="input" value={edit.debtId || ""} onChange={(e) => setEdit({ ...edit, debtId: e.target.value || null })}>
-                <option value="">None</option>
-                {state.debts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            </Field>
-            <Field label="Payment method"><input className="input" value={edit.paymentMethod || ""} onChange={(e) => setEdit({ ...edit, paymentMethod: e.target.value })} /></Field>
-            <label className="field"><input type="checkbox" checked={!!edit.autopay} onChange={(e) => setEdit({ ...edit, autopay: e.target.checked })} /> Autopay</label>
             <label className="field"><input type="checkbox" checked={edit.active !== false} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} /> Active</label>
             <Field label="Notes" className="full"><textarea className="input" value={edit.notes || ""} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} /></Field>
             <div className="full row" style={{ justifyContent: "flex-end" }}><Button type="submit" variant="primary">Save</Button></div>
@@ -140,20 +130,20 @@ export function BillsPage() {
         ) : null}
       </Modal>
 
-      <Modal open={!!pay} title="Mark bill paid" onClose={() => setPay(null)}>
-        {pay ? (
+      <Modal open={!!payModal} title="Pay bill" onClose={() => setPayModal(null)}>
+        {payModal ? (
           <form className="stack" onSubmit={(ev) => {
             ev.preventDefault();
-            markBillPaid(pay.billId, pay.date, parseDollarsToCents(pay.amount), state.bills.find((b) => b.id === pay.billId)?.accountId ?? null);
-            setPay(null);
+            payBill(payModal.id, parseDollarsToCents(payModal.amount), today);
+            setPayModal(null);
           }}>
-            <Field label="Amount actually paid"><input className="input" value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} /></Field>
-            <p className="tiny muted">This creates a transaction and updates the budget. If the bill is linked to a debt, that balance updates too.</p>
-            <Button type="submit" variant="primary">Save payment</Button>
+            <Field label="Amount actually paid"><input className="input" value={payModal.amount} onChange={(e) => setPayModal({ ...payModal, amount: e.target.value })} /></Field>
+            <p className="tiny muted">This records an expense from the bill’s bucket. The next due date then moves forward.</p>
+            <Button type="submit" variant="primary">Record payment</Button>
           </form>
         ) : null}
       </Modal>
-      <Confirm open={!!del} title="Delete this bill?" body="Future occurrences will disappear. Existing payments stay in Transactions." danger confirmLabel="Delete" onClose={() => setDel(null)} onConfirm={() => { if (del) removeBill(del); setDel(null); }} />
+      <Confirm open={!!del} title="Delete this bill?" body="Past payments stay in Transactions." danger confirmLabel="Delete" onClose={() => setDel(null)} onConfirm={() => { if (del) removeBill(del); setDel(null); }} />
     </div>
   );
 }
