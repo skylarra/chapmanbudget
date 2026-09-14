@@ -4,7 +4,7 @@ import { Button, Card, Empty, Field, Money, Progress } from "../components/ui";
 import { Confirm, Modal } from "../components/Layout";
 import { createId } from "../lib/ids";
 import { stamp } from "../lib/defaults";
-import { parseDollarsToCents } from "../lib/money";
+import { formCents, formValue, parseDollarsToCents } from "../lib/money";
 import { expenseSpent, monthBucketActivity } from "../lib/calculations";
 import type { ExpenseBucket } from "../lib/types";
 
@@ -55,28 +55,30 @@ export function BucketsPage() {
         {edit ? (
           <form className="form-grid" onSubmit={(ev) => {
             ev.preventDefault();
+            const form = ev.currentTarget;
+            const limitRaw = formValue(form, "limit");
             saveExpenseBucket({
               id: edit.id || createId("exp"),
-              name: edit.name || "Bucket",
-              balanceCents: edit.balanceCents || 0,
-              targetCents: edit.targetCents || 0,
-              rollover: edit.rollover !== false,
-              spendingLimitCents: edit.spendingLimitCents ?? null,
-              notes: edit.notes || "",
+              name: formValue(form, "name") || "Bucket",
+              balanceCents: formCents(form, "balance"),
+              targetCents: formCents(form, "target"),
+              rollover: (form.elements.namedItem("rollover") as HTMLInputElement | null)?.checked !== false,
+              spendingLimitCents: limitRaw.trim() ? parseDollarsToCents(limitRaw) : null,
+              notes: formValue(form, "notes"),
               color: edit.color || "#1f6f5b",
-              icon: edit.icon || "📦",
+              icon: formValue(form, "icon") || "📦",
               sortOrder: edit.sortOrder ?? state.expenseBuckets.length,
               ...stamp(),
             });
             setEdit(null);
           }}>
-            <Field label="Name" className="full"><input className="input" value={edit.name || ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} required /></Field>
-            <Field label="Icon"><input className="input" value={edit.icon || ""} onChange={(e) => setEdit({ ...edit, icon: e.target.value })} /></Field>
-            <Field label="Target budget"><input className="input" defaultValue={((edit.targetCents || 0) / 100).toFixed(2)} onBlur={(e) => setEdit({ ...edit, targetCents: parseDollarsToCents(e.target.value) })} /></Field>
-            <Field label="Current balance"><input className="input" defaultValue={((edit.balanceCents || 0) / 100).toFixed(2)} onBlur={(e) => setEdit({ ...edit, balanceCents: parseDollarsToCents(e.target.value) })} /></Field>
-            <Field label="Optional spending limit"><input className="input" defaultValue={edit.spendingLimitCents == null ? "" : (edit.spendingLimitCents / 100).toFixed(2)} onBlur={(e) => setEdit({ ...edit, spendingLimitCents: e.target.value.trim() ? parseDollarsToCents(e.target.value) : null })} /></Field>
-            <label className="field"><input type="checkbox" checked={edit.rollover !== false} onChange={(e) => setEdit({ ...edit, rollover: e.target.checked })} /> Rollover unused target</label>
-            <Field label="Notes" className="full"><textarea className="input" value={edit.notes || ""} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} /></Field>
+            <Field label="Name" className="full"><input className="input" name="name" defaultValue={edit.name || ""} required /></Field>
+            <Field label="Icon"><input className="input" name="icon" defaultValue={edit.icon || ""} /></Field>
+            <Field label="Target budget"><input className="input" name="target" inputMode="decimal" defaultValue={((edit.targetCents || 0) / 100).toFixed(2)} /></Field>
+            <Field label="Current balance"><input className="input" name="balance" inputMode="decimal" defaultValue={((edit.balanceCents || 0) / 100).toFixed(2)} /></Field>
+            <Field label="Optional spending limit"><input className="input" name="limit" inputMode="decimal" defaultValue={edit.spendingLimitCents == null ? "" : (edit.spendingLimitCents / 100).toFixed(2)} /></Field>
+            <label className="field"><input type="checkbox" name="rollover" defaultChecked={edit.rollover !== false} /> Rollover unused target</label>
+            <Field label="Notes" className="full"><textarea className="input" name="notes" defaultValue={edit.notes || ""} /></Field>
             <div className="full row" style={{ justifyContent: "flex-end" }}><Button type="submit" variant="primary">Save</Button></div>
           </form>
         ) : null}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCents, dollarsToCents, formatMoney, parseDollarsToCents } from "./money";
+import { addCents, dollarsToCents, formatMoney, formCents, parseDollarsToCents } from "./money";
 import { advanceFrom, listOccurrencesInRange } from "./recurrence";
 import { createEmptyState } from "./defaults";
 import { hydrateFromUnknown, migrateLegacy } from "./migrate";
@@ -13,6 +13,11 @@ describe("money", () => {
     expect(dollarsToCents(0.1 + 0.2)).toBe(30);
     expect(addCents(40000, -4267)).toBe(35733);
     expect(formatMoney(125000)).toBe("$1,250.00");
+  });
+
+  it("reads named form money fields so submit does not depend on blur", () => {
+    const form = { elements: { namedItem: (name: string) => (name === "amount" ? { value: "145.00" } : null) } };
+    expect(formCents(form as unknown as HTMLFormElement, "amount")).toBe(14500);
   });
 });
 

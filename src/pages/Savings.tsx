@@ -4,7 +4,7 @@ import { Button, Card, Empty, Field, FREQ_OPTIONS, Money, Progress } from "../co
 import { Confirm, Modal } from "../components/Layout";
 import { createId } from "../lib/ids";
 import { stamp } from "../lib/defaults";
-import { parseDollarsToCents } from "../lib/money";
+import { formCents, formValue, parseDollarsToCents } from "../lib/money";
 import { todayYmd } from "../lib/dates";
 import type { Frequency, SavingsBucket } from "../lib/types";
 
@@ -51,15 +51,16 @@ export function SavingsPage() {
         {edit ? (
           <form className="form-grid" onSubmit={(ev) => {
             ev.preventDefault();
+            const form = ev.currentTarget;
             saveSavingsBucket({
               id: edit.id || createId("sav"),
-              name: edit.name || "Savings",
-              balanceCents: edit.balanceCents || 0,
-              goalCents: edit.goalCents || 0,
-              targetDate: edit.targetDate || null,
-              autoContributionCents: edit.autoContributionCents || 0,
-              autoFrequency: edit.autoFrequency || "biweekly",
-              notes: edit.notes || "",
+              name: formValue(form, "name") || "Savings",
+              balanceCents: formCents(form, "balance"),
+              goalCents: formCents(form, "goal"),
+              targetDate: formValue(form, "targetDate") || null,
+              autoContributionCents: formCents(form, "auto"),
+              autoFrequency: (formValue(form, "autoFrequency") as Frequency) || "biweekly",
+              notes: formValue(form, "notes"),
               color: edit.color || "#1f6f5b",
               icon: edit.icon || "💰",
               sortOrder: edit.sortOrder ?? state.savingsBuckets.length,
@@ -67,17 +68,17 @@ export function SavingsPage() {
             });
             setEdit(null);
           }}>
-            <Field label="Name" className="full"><input className="input" value={edit.name || ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} required /></Field>
-            <Field label="Goal"><input className="input" defaultValue={((edit.goalCents || 0) / 100).toFixed(2)} onBlur={(e) => setEdit({ ...edit, goalCents: parseDollarsToCents(e.target.value) })} /></Field>
-            <Field label="Current"><input className="input" defaultValue={((edit.balanceCents || 0) / 100).toFixed(2)} onBlur={(e) => setEdit({ ...edit, balanceCents: parseDollarsToCents(e.target.value) })} /></Field>
-            <Field label="Auto contribution"><input className="input" defaultValue={((edit.autoContributionCents || 0) / 100).toFixed(2)} onBlur={(e) => setEdit({ ...edit, autoContributionCents: parseDollarsToCents(e.target.value) })} /></Field>
+            <Field label="Name" className="full"><input className="input" name="name" defaultValue={edit.name || ""} required /></Field>
+            <Field label="Goal"><input className="input" name="goal" inputMode="decimal" defaultValue={((edit.goalCents || 0) / 100).toFixed(2)} /></Field>
+            <Field label="Current"><input className="input" name="balance" inputMode="decimal" defaultValue={((edit.balanceCents || 0) / 100).toFixed(2)} /></Field>
+            <Field label="Auto contribution"><input className="input" name="auto" inputMode="decimal" defaultValue={((edit.autoContributionCents || 0) / 100).toFixed(2)} /></Field>
             <Field label="Auto frequency">
-              <select className="input" value={edit.autoFrequency || "biweekly"} onChange={(e) => setEdit({ ...edit, autoFrequency: e.target.value as Frequency })}>
+              <select className="input" name="autoFrequency" defaultValue={edit.autoFrequency || "biweekly"}>
                 {FREQ_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
-            <Field label="Target date"><input className="input" type="date" value={edit.targetDate || ""} onChange={(e) => setEdit({ ...edit, targetDate: e.target.value || null })} /></Field>
-            <Field label="Notes" className="full"><textarea className="input" value={edit.notes || ""} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} /></Field>
+            <Field label="Target date"><input className="input" name="targetDate" type="date" defaultValue={edit.targetDate || ""} /></Field>
+            <Field label="Notes" className="full"><textarea className="input" name="notes" defaultValue={edit.notes || ""} /></Field>
             <div className="full row" style={{ justifyContent: "flex-end" }}><Button type="submit" variant="primary">Save</Button></div>
           </form>
         ) : null}

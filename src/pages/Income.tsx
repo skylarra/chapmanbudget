@@ -4,7 +4,7 @@ import { Button, Card, Empty, Field, FREQ_OPTIONS, Money } from "../components/u
 import { Modal } from "../components/Layout";
 import { createId } from "../lib/ids";
 import { stamp } from "../lib/defaults";
-import { parseDollarsToCents } from "../lib/money";
+import { formCents, formValue } from "../lib/money";
 import { FREQUENCY_LABEL, type Frequency, type IncomeSource } from "../lib/types";
 import { formatNiceDate, todayYmd } from "../lib/dates";
 import type { PageId } from "../components/Layout";
@@ -50,32 +50,34 @@ export function IncomePage({ onPage, onAdd }: { onPage: (id: PageId) => void; on
         {edit ? (
           <form className="form-grid" onSubmit={(ev) => {
             ev.preventDefault();
+            const form = ev.currentTarget;
+            const frequency = (formValue(form, "frequency") as Frequency) || "monthly";
             saveIncome({
               id: edit.id || createId("inc"),
-              name: edit.name || "Income",
-              expectedCents: edit.expectedCents || 0,
-              frequency: edit.frequency || "monthly",
-              nextDate: edit.nextDate || todayYmd(),
-              secondDay: edit.frequency === "twice_monthly" ? edit.secondDay ?? 15 : null,
-              active: edit.active !== false,
-              notes: edit.notes || "",
+              name: formValue(form, "name") || "Income",
+              expectedCents: formCents(form, "expected"),
+              frequency,
+              nextDate: formValue(form, "nextDate") || todayYmd(),
+              secondDay: frequency === "twice_monthly" ? Number(formValue(form, "secondDay") || 15) : null,
+              active: (form.elements.namedItem("active") as HTMLInputElement | null)?.checked !== false,
+              notes: formValue(form, "notes"),
               ...stamp(),
             });
             setEdit(null);
           }}>
-            <Field label="Name" className="full"><input className="input" value={edit.name || ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} required /></Field>
-            <Field label="Expected amount"><input className="input" defaultValue={((edit.expectedCents || 0) / 100).toFixed(2)} onBlur={(e) => setEdit({ ...edit, expectedCents: parseDollarsToCents(e.target.value) })} /></Field>
+            <Field label="Name" className="full"><input className="input" name="name" defaultValue={edit.name || ""} required /></Field>
+            <Field label="Expected amount"><input className="input" name="expected" inputMode="decimal" defaultValue={((edit.expectedCents || 0) / 100).toFixed(2)} /></Field>
             <Field label="Frequency">
-              <select className="input" value={edit.frequency || "monthly"} onChange={(e) => setEdit({ ...edit, frequency: e.target.value as Frequency })}>
+              <select className="input" name="frequency" defaultValue={edit.frequency || "monthly"} onChange={(e) => setEdit((cur) => cur ? { ...cur, frequency: e.target.value as Frequency } : cur)}>
                 {FREQ_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
-            <Field label="Next expected date"><input className="input" type="date" value={edit.nextDate || ""} onChange={(e) => setEdit({ ...edit, nextDate: e.target.value })} /></Field>
+            <Field label="Next expected date"><input className="input" name="nextDate" type="date" defaultValue={edit.nextDate || ""} /></Field>
             {edit.frequency === "twice_monthly" ? (
-              <Field label="Second day of month"><input className="input" type="number" min={1} max={28} value={edit.secondDay ?? 15} onChange={(e) => setEdit({ ...edit, secondDay: Number(e.target.value) })} /></Field>
+              <Field label="Second day of month"><input className="input" name="secondDay" type="number" min={1} max={28} defaultValue={edit.secondDay ?? 15} /></Field>
             ) : null}
-            <label className="field"><input type="checkbox" checked={edit.active !== false} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} /> Active</label>
-            <Field label="Notes" className="full"><textarea className="input" value={edit.notes || ""} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} /></Field>
+            <label className="field"><input type="checkbox" name="active" defaultChecked={edit.active !== false} /> Active</label>
+            <Field label="Notes" className="full"><textarea className="input" name="notes" defaultValue={edit.notes || ""} /></Field>
             <div className="full row" style={{ justifyContent: "flex-end" }}><Button type="submit" variant="primary">Save</Button></div>
           </form>
         ) : null}

@@ -12,7 +12,7 @@ import {
 } from "../lib/calculations";
 import { createId } from "../lib/ids";
 import { stamp } from "../lib/defaults";
-import { parseDollarsToCents } from "../lib/money";
+import { formCents, formValue, parseDollarsToCents } from "../lib/money";
 import { FREQUENCY_LABEL, type Bill, type Frequency } from "../lib/types";
 import { todayYmd } from "../lib/dates";
 
@@ -33,16 +33,16 @@ export function BillsPage() {
         <Button variant="primary" onClick={() => setEdit({ name: "", amountCents: 0, frequency: "monthly", nextDueDate: today, secondDay: null, bucketId: state.expenseBuckets[0]?.id ?? null, active: true, notes: "" })}>Add bill</Button>
       </div>
 
-      {pay ? (
+      {bills.some((b) => b.frequency !== "once") ? (
         <Card>
           <h2>Bill funding (recommendation)</h2>
           <p className="tiny muted">
-            With {FREQUENCY_LABEL[pay.frequency].toLowerCase()} income, a monthly bill is estimated as amount × 12 ÷ {pay.frequency === "biweekly" ? "26" : "paychecks per year"}. These are suggested set-asides, not required allocations.
+            With {FREQUENCY_LABEL[pay?.frequency ?? "biweekly"].toLowerCase()} income, a monthly bill is estimated as amount × 12 ÷ {(pay?.frequency ?? "biweekly") === "biweekly" ? "26" : "paychecks per year"}. These are suggested set-asides, not required allocations.
           </p>
           {bills.filter((b) => b.frequency !== "once").slice(0, 8).map((b) => (
             <div key={b.id} className="between">
               <span>{b.name}</span>
-              <span className="tiny">~ <Money cents={recommendedPerPaycheck(b, pay.frequency)} /> / paycheck</span>
+              <span className="tiny">~ <Money cents={recommendedPerPaycheck(b, pay?.frequency ?? "biweekly")} /> / paycheck</span>
             </div>
           ))}
         </Card>
@@ -92,39 +92,41 @@ export function BillsPage() {
         {edit ? (
           <form className="form-grid" onSubmit={(ev) => {
             ev.preventDefault();
+            const form = ev.currentTarget;
+            const frequency = (formValue(form, "frequency") as Frequency) || "monthly";
             saveBill({
               id: edit.id || createId("bill"),
-              name: edit.name || "Bill",
-              amountCents: edit.amountCents || 0,
-              frequency: edit.frequency || "monthly",
-              nextDueDate: edit.nextDueDate || today,
-              secondDay: edit.frequency === "twice_monthly" ? edit.secondDay ?? 15 : null,
-              bucketId: edit.bucketId || null,
-              active: edit.active !== false,
-              notes: edit.notes || "",
+              name: formValue(form, "name") || "Bill",
+              amountCents: formCents(form, "amount"),
+              frequency,
+              nextDueDate: formValue(form, "nextDueDate") || today,
+              secondDay: frequency === "twice_monthly" ? Number(formValue(form, "secondDay") || 15) : null,
+              bucketId: formValue(form, "bucketId") || null,
+              active: (form.elements.namedItem("active") as HTMLInputElement | null)?.checked !== false,
+              notes: formValue(form, "notes"),
               ...stamp(),
             });
             setEdit(null);
           }}>
-            <Field label="Name" className="full"><input className="input" value={edit.name || ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} required /></Field>
-            <Field label="Amount"><input className="input" inputMode="decimal" defaultValue={((edit.amountCents || 0) / 100).toFixed(2)} onBlur={(e) => setEdit({ ...edit, amountCents: parseDollarsToCents(e.target.value) })} /></Field>
+            <Field label="Name" className="full"><input className="input" name="name" defaultValue={edit.name || ""} required /></Field>
+            <Field label="Amount"><input className="input" name="amount" inputMode="decimal" defaultValue={((edit.amountCents || 0) / 100).toFixed(2)} /></Field>
             <Field label="Frequency">
-              <select className="input" value={edit.frequency || "monthly"} onChange={(e) => setEdit({ ...edit, frequency: e.target.value as Frequency })}>
+              <select className="input" name="frequency" defaultValue={edit.frequency || "monthly"} onChange={(e) => setEdit((cur) => cur ? { ...cur, frequency: e.target.value as Frequency } : cur)}>
                 {FREQ_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
-            <Field label="Next due date"><input className="input" type="date" value={edit.nextDueDate || ""} onChange={(e) => setEdit({ ...edit, nextDueDate: e.target.value })} /></Field>
+            <Field label="Next due date"><input className="input" name="nextDueDate" type="date" defaultValue={edit.nextDueDate || ""} /></Field>
             {edit.frequency === "twice_monthly" ? (
-              <Field label="Second day of month"><input className="input" type="number" min={1} max={28} value={edit.secondDay ?? 15} onChange={(e) => setEdit({ ...edit, secondDay: Number(e.target.value) })} /></Field>
+              <Field label="Second day of month"><input className="input" name="secondDay" type="number" min={1} max={28} defaultValue={edit.secondDay ?? 15} /></Field>
             ) : null}
             <Field label="Pay from bucket" className="full">
-              <select className="input" value={edit.bucketId || ""} onChange={(e) => setEdit({ ...edit, bucketId: e.target.value || null })}>
+              <select className="input" name="bucketId" defaultValue={edit.bucketId || ""}>
                 <option value="">Available (unassigned)</option>
                 {state.expenseBuckets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </Field>
-            <label className="field"><input type="checkbox" checked={edit.active !== false} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} /> Active</label>
-            <Field label="Notes" className="full"><textarea className="input" value={edit.notes || ""} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} /></Field>
+            <label className="field"><input type="checkbox" name="active" defaultChecked={edit.active !== false} /> Active</label>
+            <Field label="Notes" className="full"><textarea className="input" name="notes" defaultValue={edit.notes || ""} /></Field>
             <div className="full row" style={{ justifyContent: "flex-end" }}><Button type="submit" variant="primary">Save</Button></div>
           </form>
         ) : null}

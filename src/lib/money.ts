@@ -85,3 +85,13 @@ export function formatPercent(value: number, digits = 1): string {
   if (!Number.isFinite(value)) return "0%";
   return `${value.toFixed(digits)}%`;
 }
+
+export function formValue(form: HTMLFormElement, name: string): string {
+  const el = form.elements.namedItem(name);
+  if (!el || !("value" in el)) return "";
+  return String((el as { value: string }).value);
+}
+
+export function formCents(form: HTMLFormElement, name: string): Cents {
+  return parseDollarsToCents(formValue(form, name));
+}
