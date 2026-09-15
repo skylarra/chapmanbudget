@@ -1,4 +1,4 @@
-import { addDays, addMonthsClamped, isValidYmd, parseYmd, toYmd } from "./dates";
+import { addDays, addMonthsClamped, clampDay, daysInMonth, isValidYmd, parseYmd, toYmd } from "./dates";
 import type { Frequency } from "./types";
 
 export interface RecurringLike {
@@ -7,17 +7,8 @@ export interface RecurringLike {
   dueDate?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  secondDay?: number | null;
   active?: boolean;
-}
-
-const STEP_DAYS: Partial<Record<Frequency, number>> = {
-  weekly: 7,
-  biweekly: 14,
-};
-
-function anchorDate(item: RecurringLike): Date | null {
-  const ymd = item.startDate || item.nextDate || item.dueDate || "";
-  return parseYmd(ymd);
 }
 
 export function periodsPerYear(frequency: Frequency): number {
@@ -26,6 +17,8 @@ export function periodsPerYear(frequency: Frequency): number {
       return 52;
     case "biweekly":
       return 26;
+    case "twice_monthly":
+      return 24;
     case "monthly":
       return 12;
     case "quarterly":
@@ -37,74 +30,106 @@ export function periodsPerYear(frequency: Frequency): number {
   }
 }
 
-function advance(date: Date, frequency: Frequency, originalDay: number): Date {
-  if (frequency === "weekly") return addDays(date, 7);
-  if (frequency === "biweekly") return addDays(date, 14);
-  if (frequency === "monthly") return addMonthsClamped(date, 1, originalDay);
-  if (frequency === "quarterly") return addMonthsClamped(date, 3, originalDay);
-  if (frequency === "annually") return addMonthsClamped(date, 12, originalDay);
-  return addDays(date, 1);
+function originYmd(item: RecurringLike): string | null {
+  const ymd = item.startDate || item.nextDate || item.dueDate || "";
+  return isValidYmd(ymd) ? ymd : null;
 }
 
-function rewind(date: Date, frequency: Frequency, originalDay: number): Date {
-  if (frequency === "weekly") return addDays(date, -7);
-  if (frequency === "biweekly") return addDays(date, -14);
-  if (frequency === "monthly") return addMonthsClamped(date, -1, originalDay);
-  if (frequency === "quarterly") return addMonthsClamped(date, -3, originalDay);
-  if (frequency === "annually") return addMonthsClamped(date, -12, originalDay);
-  return addDays(date, -1);
+function twiceDays(item: RecurringLike): [number, number] {
+  const origin = parseYmd(originYmd(item) || "") ?? new Date();
+  const a = clampDay(origin.getDate(), 1, 28);
+  const b = clampDay(item.secondDay ?? 15, 1, 28);
+  return a <= b ? [a, b] : [b, a];
 }
 
-export function listOccurrencesInRange(
-  item: RecurringLike,
-  rangeStartYmd: string,
-  rangeEndYmd: string,
-): string[] {
+function dateOn(year: number, monthIndex: number, day: number): Date {
+  const dim = daysInMonth(year, monthIndex);
+  return new Date(year, monthIndex, Math.min(day, dim), 0, 0, 0, 0);
+}
+
+export function advanceFrom(ymd: string, frequency: Frequency, secondDay?: number | null): string {
+  const d = parseYmd(ymd);
+  if (!d) return ymd;
+  if (frequency === "once") return ymd;
+  if (frequency === "weekly") return toYmd(addDays(d, 7));
+  if (frequency === "biweekly") return toYmd(addDays(d, 14));
+  if (frequency === "monthly") return toYmd(addMonthsClamped(d, 1, d.getDate()));
+  if (frequency === "quarterly") return toYmd(addMonthsClamped(d, 3, d.getDate()));
+  if (frequency === "annually") return toYmd(addMonthsClamped(d, 12, d.getDate()));
+  const [first, second] = twiceDays({ frequency, nextDate: ymd, secondDay: secondDay ?? 15 });
+  const day = d.getDate();
+  if (day < second && first !== second) return toYmd(dateOn(d.getFullYear(), d.getMonth(), second));
+  const next = addMonthsClamped(d, 1, 1);
+  return toYmd(dateOn(next.getFullYear(), next.getMonth(), first));
+}
+
+export function listOccurrencesInRange(item: RecurringLike, rangeStartYmd: string, rangeEndYmd: string): string[] {
   if (item.active === false) return [];
-  if (!isValidYmd(rangeStartYmd) || !isValidYmd(rangeEndYmd)) return [];
-  if (rangeStartYmd > rangeEndYmd) return [];
+  if (!isValidYmd(rangeStartYmd) || !isValidYmd(rangeEndYmd) || rangeStartYmd > rangeEndYmd) return [];
 
-  const startBound = item.startDate && isValidYmd(item.startDate) ? item.startDate : null;
+  const startBound = item.startDate && isValidYmd(item.startDate) ? item.startDate : originYmd(item);
   const endBound = item.endDate && isValidYmd(item.endDate) ? item.endDate : null;
 
   if (item.frequency === "once") {
-    const date = item.nextDate || item.dueDate || item.startDate;
-    if (!date || !isValidYmd(date)) return [];
-    if (date < rangeStartYmd || date > rangeEndYmd) return [];
-    if (startBound && date < startBound) return [];
-    if (endBound && date > endBound) return [];
+    const date = originYmd(item);
+    if (!date || date < rangeStartYmd || date > rangeEndYmd) return [];
     return [date];
   }
 
-  const anchor = anchorDate(item);
+  if (item.frequency === "twice_monthly") {
+    const [first, second] = twiceDays(item);
+    const start = parseYmd(rangeStartYmd)!;
+    const end = parseYmd(rangeEndYmd)!;
+    const out: string[] = [];
+    let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+    while (cursor <= end) {
+      for (const day of first === second ? [first] : [first, second]) {
+        const d = dateOn(cursor.getFullYear(), cursor.getMonth(), day);
+        const ymd = toYmd(d);
+        if (ymd >= rangeStartYmd && ymd <= rangeEndYmd && (!startBound || ymd >= startBound) && (!endBound || ymd <= endBound)) {
+          out.push(ymd);
+        }
+      }
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    }
+    return out;
+  }
+
+  const origin = originYmd(item);
+  const anchor = parseYmd(origin);
   if (!anchor) return [];
   const originalDay = anchor.getDate();
   const rangeStart = parseYmd(rangeStartYmd)!;
   const rangeEnd = parseYmd(rangeEndYmd)!;
-
   let cursor = new Date(anchor);
   cursor.setHours(0, 0, 0, 0);
 
-  const step = STEP_DAYS[item.frequency];
+  const step = item.frequency === "weekly" ? 7 : item.frequency === "biweekly" ? 14 : 0;
   if (step) {
-    const startMs = rangeStart.getTime();
-    const deltaDays = Math.floor((startMs - cursor.getTime()) / 86400000);
-    if (deltaDays > 0) {
-      const jumps = Math.floor(deltaDays / step);
-      cursor = addDays(cursor, jumps * step);
-    }
+    const deltaDays = Math.floor((rangeStart.getTime() - cursor.getTime()) / 86400000);
+    if (deltaDays > 0) cursor = addDays(cursor, Math.floor(deltaDays / step) * step);
     while (cursor < rangeStart) cursor = addDays(cursor, step);
   } else {
     let guard = 0;
     while (cursor > rangeStart && guard < 600) {
-      const prev = rewind(cursor, item.frequency, originalDay);
+      const prev =
+        item.frequency === "monthly"
+          ? addMonthsClamped(cursor, -1, originalDay)
+          : item.frequency === "quarterly"
+            ? addMonthsClamped(cursor, -3, originalDay)
+            : addMonthsClamped(cursor, -12, originalDay);
       if (prev.getTime() === cursor.getTime()) break;
       cursor = prev;
       guard += 1;
     }
     guard = 0;
     while (cursor < rangeStart && guard < 600) {
-      cursor = advance(cursor, item.frequency, originalDay);
+      cursor =
+        item.frequency === "monthly"
+          ? addMonthsClamped(cursor, 1, originalDay)
+          : item.frequency === "quarterly"
+            ? addMonthsClamped(cursor, 3, originalDay)
+            : addMonthsClamped(cursor, 12, originalDay);
       guard += 1;
     }
   }
@@ -113,29 +138,28 @@ export function listOccurrencesInRange(
   let safety = 0;
   while (cursor <= rangeEnd && safety < 800) {
     const ymd = toYmd(cursor);
-    const afterStart = !startBound || ymd >= startBound;
-    const beforeEnd = !endBound || ymd <= endBound;
-    if (afterStart && beforeEnd && ymd >= rangeStartYmd && ymd <= rangeEndYmd) {
+    if ((!startBound || ymd >= startBound) && (!endBound || ymd <= endBound) && ymd >= rangeStartYmd && ymd <= rangeEndYmd) {
       out.push(ymd);
     }
-    cursor = advance(cursor, item.frequency, originalDay);
+    cursor =
+      step
+        ? addDays(cursor, step)
+        : item.frequency === "monthly"
+          ? addMonthsClamped(cursor, 1, originalDay)
+          : item.frequency === "quarterly"
+            ? addMonthsClamped(cursor, 3, originalDay)
+            : addMonthsClamped(cursor, 12, originalDay);
     safety += 1;
   }
   return out;
 }
 
-export function nextOccurrenceOnOrAfter(item: RecurringLike, fromYmd: string): string | null {
+export function nextOccurrenceAfter(item: RecurringLike, afterYmd: string): string | null {
   if (item.active === false) return null;
   if (item.frequency === "once") {
-    const date = item.nextDate || item.dueDate || item.startDate;
-    if (!date || !isValidYmd(date)) return null;
-    return date >= fromYmd ? date : null;
+    const date = originYmd(item);
+    if (!date) return null;
+    return date > afterYmd ? date : null;
   }
-  const far = addDays(parseYmd(fromYmd) ?? new Date(), 370 * 5);
-  const dates = listOccurrencesInRange(item, fromYmd, toYmd(far));
-  return dates[0] ?? null;
-}
-
-export function countOccurrencesInRange(item: RecurringLike, start: string, end: string): number {
-  return listOccurrencesInRange(item, start, end).length;
+  return advanceFrom(afterYmd, item.frequency, item.secondDay);
 }

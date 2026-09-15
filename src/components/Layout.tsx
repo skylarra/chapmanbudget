@@ -1,52 +1,28 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { formatMonthLabel, addMonthsKey, monthKeyFromDate } from "../lib/dates";
-import { globalSearch } from "../lib/calculations";
+import { useEffect, useState, type ReactNode } from "react";
+import { addMonthsKey, formatMonthLabel, monthKeyFromDate } from "../lib/dates";
 import { useStore } from "../store";
 import { Button } from "./ui";
 
-export type PageId =
-  | "dashboard"
-  | "budget"
-  | "transactions"
-  | "bills"
-  | "income"
-  | "savings"
-  | "debt"
-  | "buckets"
-  | "history"
-  | "settings"
-  | "calendar"
-  | "networth"
-  | "goals"
-  | "paycheck";
+export type PageId = "dashboard" | "bills" | "buckets" | "savings" | "transactions" | "income" | "settings" | "paycheck";
 
 const NAV: { id: PageId; label: string; icon: string; mobile?: boolean }[] = [
   { id: "dashboard", label: "Dashboard", icon: "⌂", mobile: true },
-  { id: "budget", label: "Budget", icon: "▦", mobile: true },
   { id: "bills", label: "Bills", icon: "☑", mobile: true },
+  { id: "buckets", label: "Buckets", icon: "▢", mobile: true },
   { id: "transactions", label: "Transactions", icon: "☰", mobile: true },
-  { id: "income", label: "Income", icon: "↓" },
   { id: "savings", label: "Savings", icon: "◎" },
-  { id: "debt", label: "Debt", icon: "%" },
-  { id: "buckets", label: "Buckets", icon: "▢" },
-  { id: "paycheck", label: "Paychecks", icon: "◇" },
-  { id: "calendar", label: "Calendar", icon: "▦" },
-  { id: "history", label: "History", icon: "↺" },
-  { id: "networth", label: "Net worth", icon: "◈" },
-  { id: "goals", label: "Goals", icon: "★" },
+  { id: "income", label: "Income", icon: "↓" },
   { id: "settings", label: "Settings", icon: "⚙" },
 ];
 
 export function parseHash(): PageId {
   const h = (location.hash.replace(/^#\/?/, "") || "dashboard").split("?")[0];
-  return (NAV.some((n) => n.id === h) ? h : "dashboard") as PageId;
+  return NAV.some((n) => n.id === h) || h === "paycheck" ? (h as PageId) : "dashboard";
 }
 
 export function Layout({ page, onPage, children }: { page: PageId; onPage: (id: PageId) => void; children: ReactNode }) {
-  const { state, setMonth, locked, loadError } = useStore();
-  const [search, setSearch] = useState("");
+  const { state, setMonth, loadError } = useStore();
   const [more, setMore] = useState(false);
-  const results = useMemo(() => (search.length > 1 ? globalSearch(state, search) : []), [search, state]);
 
   useEffect(() => {
     const onHash = () => onPage(parseHash());
@@ -58,20 +34,6 @@ export function Layout({ page, onPage, children }: { page: PageId; onPage: (id: 
     location.hash = `#/${id}`;
     onPage(id);
     setMore(false);
-    setSearch("");
-  };
-
-  const jump = (kind: string) => {
-    const map: Record<string, PageId> = {
-      transaction: "transactions",
-      bill: "bills",
-      expense: "budget",
-      income: "income",
-      debt: "debt",
-      savings: "savings",
-      bucket: "buckets",
-    };
-    go(map[kind] || "dashboard");
   };
 
   return (
@@ -79,10 +41,10 @@ export function Layout({ page, onPage, children }: { page: PageId; onPage: (id: 
       <a className="skip" href="#main">Skip to content</a>
       <aside className="sidebar" aria-label="Primary">
         <div className="brand">
-          <img src="./icon.svg" alt="" width={36} height={36} />
+          <svg viewBox="0 0 48 48" aria-hidden="true"><rect width="48" height="48" rx="12" fill="#1f6f5b"/><path fill="#f4f7f5" d="M24 10c-3 0-5 2-5 5v3h-6c-2 0-4 2-4 4v16c0 2 2 4 4 4h22c2 0 4-2 4-4V22c0-2-2-4-4-4h-6v-3c0-3-2-5-5-5zm0 3c1 0 2 1 2 2v3h-4v-3c0-1 1-2 2-2zm-11 9h22v16H13V22zm11 4a5 5 0 100 10 5 5 0 000-10z"/></svg>
           <div>
-            <h1>Chapman Budget</h1>
-            <p>Household money</p>
+            <h1>Boodget</h1>
+            <p>Bucket budgeting</p>
           </div>
         </div>
         {NAV.map((n) => (
@@ -95,38 +57,17 @@ export function Layout({ page, onPage, children }: { page: PageId; onPage: (id: 
       <div>
         <main className="main" id="main">
           {loadError ? <div className="banner" role="alert">{loadError}</div> : null}
-          {locked ? (
-            <div className="banner" role="status" style={{ marginBottom: 12 }}>
-              {formatMonthLabel(state.currentMonth)} is archived and read-only. Unlock it from History if you need to edit.
-            </div>
-          ) : null}
           <div className="topbar">
             <div>
-              <h2 className="page-title">{NAV.find((n) => n.id === page)?.label}</h2>
+              <h2 className="page-title">{page === "paycheck" ? "Budget this paycheck" : NAV.find((n) => n.id === page)?.label}</h2>
               <p className="page-sub">{formatMonthLabel(state.currentMonth)}</p>
             </div>
             <div className="wrap">
-              <Button variant="ghost" onClick={() => setMonth(addMonthsKey(state.currentMonth, -1))} aria-label="Previous month">←</Button>
+              <Button variant="ghost" onClick={() => setMonth(addMonthsKey(state.currentMonth, -1))}>←</Button>
               <Button variant="ghost" onClick={() => setMonth(monthKeyFromDate(new Date()))}>This month</Button>
-              <Button variant="ghost" onClick={() => setMonth(addMonthsKey(state.currentMonth, 1))} aria-label="Next month">→</Button>
-              <label className="field" style={{ minWidth: 180, margin: 0 }}>
-                <span className="skip">Search</span>
-                <input className="input" placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} />
-              </label>
+              <Button variant="ghost" onClick={() => setMonth(addMonthsKey(state.currentMonth, 1))}>→</Button>
             </div>
           </div>
-          {search.length > 1 ? (
-            <div className="card" style={{ marginBottom: 14 }}>
-              <h3>Search results</h3>
-              {results.length === 0 ? <div className="muted">No matches.</div> : results.map((r) => (
-                <div key={`${r.kind}-${r.id}`} className="search-hit" onClick={() => jump(r.kind)} onKeyDown={(e) => e.key === "Enter" && jump(r.kind)} role="button" tabIndex={0}>
-                  <div className="tiny muted">{r.kind}</div>
-                  <div className="name">{r.title}</div>
-                  <div className="tiny muted">{r.subtitle}</div>
-                </div>
-              ))}
-            </div>
-          ) : null}
           {children}
         </main>
       </div>
@@ -158,38 +99,6 @@ export function Layout({ page, onPage, children }: { page: PageId; onPage: (id: 
   );
 }
 
-export function Confirm({
-  open,
-  title,
-  body,
-  confirmLabel = "Confirm",
-  danger,
-  onClose,
-  onConfirm,
-}: {
-  open: boolean;
-  title: string;
-  body: ReactNode;
-  confirmLabel?: string;
-  danger?: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-}) {
-  if (!open) return null;
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className="modal center" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onClick={(e) => e.stopPropagation()}>
-        <h3 id="confirm-title">{title}</h3>
-        <div className="muted" style={{ marginBottom: 16 }}>{body}</div>
-        <div className="row" style={{ justifyContent: "flex-end" }}>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant={danger ? "danger" : "primary"} onClick={onConfirm}>{confirmLabel}</Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function Modal({ open, title, children, onClose }: { open: boolean; title: string; children: ReactNode; onClose: () => void }) {
   if (!open) return null;
   return (
@@ -205,5 +114,22 @@ export function Modal({ open, title, children, onClose }: { open: boolean; title
   );
 }
 
-
-
+export function Confirm({
+  open, title, body, confirmLabel = "Confirm", danger, onClose, onConfirm,
+}: {
+  open: boolean; title: string; body: ReactNode; confirmLabel?: string; danger?: boolean; onClose: () => void; onConfirm: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal center" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+        <h3>{title}</h3>
+        <div className="muted" style={{ marginBottom: 16 }}>{body}</div>
+        <div className="row" style={{ justifyContent: "flex-end" }}>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant={danger ? "danger" : "primary"} onClick={onConfirm}>{confirmLabel}</Button>
+        </div>
+      </div>
+    </div>
+  );
+}

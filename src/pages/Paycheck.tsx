@@ -1,94 +1,108 @@
 import { useMemo, useState } from "react";
 import { useStore } from "../store";
-import { Button, Card, Empty, Field, Money } from "../components/ui";
-import { formatNiceDate, monthBounds } from "../lib/dates";
-import { billOccurrences, mainIncomeSource, paycheckOccurrences } from "../lib/calculations";
-import { createId } from "../lib/ids";
+import { Button, Card, Field, Money } from "../components/ui";
+import { activeBillsSorted, mainIncomeSource, recommendedPerPaycheck } from "../lib/calculations";
 import { parseDollarsToCents } from "../lib/money";
-import type { PaycheckAssignment } from "../lib/types";
+import { todayYmd } from "../lib/dates";
+import type { PageId } from "../components/Layout";
 
-export function PaycheckPage() {
-  const { state, savePaycheckPlan, locked } = useStore();
-  const main = mainIncomeSource(state);
-  const { startYmd, endYmd } = monthBounds(state.currentMonth);
-  const pays = paycheckOccurrences(state, startYmd, endYmd);
-  const bills = billOccurrences(state, startYmd, endYmd);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+interface Line {
+  key: string;
+  kind: "expense" | "savings";
+  id: string;
+  label: string;
+  group: "Bills" | "Spending" | "Savings";
+  amount: string;
+}
 
-  const plans = useMemo(() => {
-    return pays.map((p) => {
-      const existing = state.paycheckPlans.find((x) => x.incomeSourceId === p.source.id && x.occurrenceDate === p.date);
-      return { pay: p, plan: existing };
+export function PaycheckPage({ onPage }: { onPage: (id: PageId) => void }) {
+  const { state, budgetPaycheck } = useStore();
+  const source = mainIncomeSource(state);
+  const [amount, setAmount] = useState(((source?.expectedCents || 0) / 100).toFixed(2));
+  const [date, setDate] = useState(source?.nextDate || todayYmd());
+  const bills = activeBillsSorted(state);
+  const payFreq = source?.frequency ?? "biweekly";
+
+  const initial = useMemo<Line[]>(() => {
+    const billLines: Line[] = bills.map((b) => ({
+      key: `bill-${b.id}`,
+      kind: "expense" as const,
+      id: b.bucketId || state.expenseBuckets[0]?.id || "",
+      label: b.name,
+      group: "Bills" as const,
+      amount: b.bucketId ? (recommendedPerPaycheck(b, payFreq) / 100).toFixed(2) : (b.amountCents / 100).toFixed(2),
+    })).filter((l) => l.id);
+    const spendLines: Line[] = state.expenseBuckets
+      .filter((b) => !billLines.some((l) => l.id === b.id))
+      .map((b) => ({
+        key: `exp-${b.id}`,
+        kind: "expense" as const,
+        id: b.id,
+        label: b.name,
+        group: "Spending" as const,
+        amount: b.targetCents ? (Math.round((b.targetCents * 12) / 26) / 100).toFixed(2) : "0.00",
+      }));
+    const saveLines: Line[] = state.savingsBuckets.map((s) => ({
+      key: `sav-${s.id}`,
+      kind: "savings" as const,
+      id: s.id,
+      label: s.name,
+      group: "Savings" as const,
+      amount: ((s.autoContributionCents || 0) / 100).toFixed(2),
+    }));
+    return [...billLines, ...spendLines, ...saveLines];
+  }, [state.expenseBuckets, state.savingsBuckets, bills, payFreq]);
+
+  const [lines, setLines] = useState(initial);
+  const total = parseDollarsToCents(amount);
+  const assigned = lines.reduce((s, l) => s + parseDollarsToCents(l.amount), 0);
+  const unassigned = total - assigned;
+
+  const setAmt = (key: string, value: string) => setLines(lines.map((l) => (l.key === key ? { ...l, amount: value } : l)));
+
+  const confirm = () => {
+    budgetPaycheck({
+      amountCents: total,
+      date,
+      sourceId: source?.id ?? null,
+      description: source?.name || "Paycheck",
+      lines: lines
+        .map((l) => ({ kind: l.kind, id: l.id, amountCents: parseDollarsToCents(l.amount), label: l.label }))
+        .filter((l) => l.amountCents > 0 && l.id),
     });
-  }, [pays, state.paycheckPlans]);
+    onPage("dashboard");
+  };
 
-  if (!main) return <Empty title="Add a paycheck first" hint="Create a repeating income source, then assign bills to each payday." />;
+  const groups: Line["group"][] = ["Bills", "Spending", "Savings"];
 
   return (
     <div className="stack">
-      <p className="muted">For each paycheck, see what it needs to cover. Assign bills, buckets, and extra debt payments to a payday.</p>
-      {plans.map(({ pay, plan }) => {
-        const assignments = plan?.assignments ?? [];
-        const used = assignments.reduce((s, a) => s + a.amountCents, 0);
-        const remaining = pay.amountCents - used;
-        const key = `${pay.source.id}:${pay.date}`;
-        return (
-          <Card key={key}>
-            <div className="between">
-              <div>
-                <h2 style={{ margin: 0 }}>{formatNiceDate(pay.date)} paycheck</h2>
-                <div className="tiny muted">{pay.source.name}</div>
-              </div>
-              <div>Income <b><Money cents={pay.amountCents} /></b></div>
+      <Card>
+        <h2>{source?.name || "Paycheck"}</h2>
+        <div className="form-grid">
+          <Field label="Amount received"><input className="input" value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
+          <Field label="Date"><input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+        </div>
+        <p className="tiny muted">Adjust the actual deposit if it differs from the expected amount, then assign it. Suggested bill amounts are recommendations only.</p>
+      </Card>
+      {groups.map((g) => (
+        <Card key={g}>
+          <h2>{g}</h2>
+          {lines.filter((l) => l.group === g).map((l) => (
+            <div key={l.key} className="between" style={{ marginBottom: 8 }}>
+              <span>{l.label}</span>
+              <input className="input" style={{ maxWidth: 120 }} value={l.amount} onChange={(e) => setAmt(l.key, e.target.value)} />
             </div>
-            <div className="stack" style={{ marginTop: 12 }}>
-              {assignments.length === 0 ? <div className="muted">Nothing assigned yet.</div> : assignments.map((a) => (
-                <div key={a.id} className="between">
-                  <span>{a.label}</span>
-                  <Money cents={a.amountCents} />
-                </div>
-              ))}
-              <div className="between"><b>Remaining</b><b><Money cents={remaining} /></b></div>
-            </div>
-            <div className="form-grid" style={{ marginTop: 12 }}>
-              <Field label="Assign a bill">
-                <select className="input" disabled={locked} onChange={(e) => {
-                  const bill = state.bills.find((b) => b.id === e.target.value);
-                  if (!bill) return;
-                  const next: PaycheckAssignment[] = [...assignments, { id: createId("asg"), kind: "bill", targetId: bill.id, amountCents: bill.expectedCents, label: bill.name }];
-                  savePaycheckPlan({ id: plan?.id || createId("pay"), incomeSourceId: pay.source.id, occurrenceDate: pay.date, assignments: next });
-                  e.target.value = "";
-                }}>
-                  <option value="">Choose bill…</option>
-                  {bills.map((b) => <option key={b.key} value={b.sourceId}>{b.name} ({b.date})</option>)}
-                </select>
-              </Field>
-              <Field label="Assign a bucket">
-                <select className="input" disabled={locked} onChange={(e) => {
-                  const bucket = state.buckets.find((b) => b.id === e.target.value);
-                  if (!bucket) return;
-                  const next = [...assignments, { id: createId("asg"), kind: "bucket" as const, targetId: bucket.id, amountCents: bucket.contributionCents || 0, label: bucket.name }];
-                  savePaycheckPlan({ id: plan?.id || createId("pay"), incomeSourceId: pay.source.id, occurrenceDate: pay.date, assignments: next });
-                  e.target.value = "";
-                }}>
-                  <option value="">Choose bucket…</option>
-                  {state.buckets.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
-              </Field>
-              <Field label="Extra debt amount">
-                <input className="input" placeholder="0.00" value={drafts[key] || ""} onChange={(e) => setDrafts({ ...drafts, [key]: e.target.value })} />
-              </Field>
-              <Button disabled={locked} onClick={() => {
-                const cents = parseDollarsToCents(drafts[key] || "0");
-                if (!cents) return;
-                const next = [...assignments, { id: createId("asg"), kind: "debt" as const, targetId: state.debts[0]?.id || "debt", amountCents: cents, label: "Debt extra" }];
-                savePaycheckPlan({ id: plan?.id || createId("pay"), incomeSourceId: pay.source.id, occurrenceDate: pay.date, assignments: next });
-                setDrafts({ ...drafts, [key]: "" });
-              }}>Add extra debt</Button>
-            </div>
-          </Card>
-        );
-      })}
+          ))}
+        </Card>
+      ))}
+      <Card>
+        <div className="between"><span>Paycheck</span><Money cents={total} /></div>
+        <div className="between"><span>Assigned</span><Money cents={assigned} /></div>
+        <div className="between"><b>Unassigned from this paycheck</b><b className={unassigned < 0 ? "neg" : "pos"}><Money cents={unassigned} /></b></div>
+        <p className="tiny muted">Already available stays in place. After confirm, available will be <Money cents={state.unassignedCents + unassigned} />.</p>
+      </Card>
+      <Button variant="primary" disabled={total <= 0 || unassigned < 0} onClick={confirm}>Confirm assignments</Button>
     </div>
   );
 }

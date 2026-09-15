@@ -14,9 +14,9 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["icon.svg"],
       manifest: {
-        name: "Chapman Budget",
-        short_name: "Budget",
-        description: "Household budgeting, bills, savings, and debt payoff",
+        name: "Boodget",
+        short_name: "Boodget",
+        description: "Local-first bucket budgeting for bills, spending, and savings",
         theme_color: "#1f6f5b",
         background_color: "#f4f7f5",
         display: "standalone",

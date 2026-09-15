@@ -1,22 +1,28 @@
-import { STORAGE_KEY } from "./types";
+import { PREV_STORAGE_KEY, STORAGE_KEY } from "./types";
 import type { AppState } from "./types";
 import { createEmptyState } from "./defaults";
-import { hydrateFromUnknown, migrateLegacyPayload } from "./migrate";
+import { hydrateFromUnknown, migrateLegacy } from "./migrate";
 
-const LEGACY_KEYS = ["buckets", "recurringIncome", "recurringBills", "transactions", "selectedMonth", "selectedYear"];
-
-export function loadState(): { state: AppState; recovered: boolean; error?: string } {
+export function loadState(): { state: AppState; error?: string } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      return { state: hydrateFromUnknown(JSON.parse(raw)), recovered: false };
-    }
-  } catch (err) {
+    if (raw) return { state: hydrateFromUnknown(JSON.parse(raw)) };
+  } catch {
     return {
       state: createEmptyState(),
-      recovered: true,
-      error: "Saved data looked damaged, so a blank budget was opened. Use Import in Settings if you have a backup.",
+      error: "Saved data looked damaged, so a blank budget was opened. Restore a backup from Settings if you have one.",
     };
+  }
+
+  try {
+    const prev = localStorage.getItem(PREV_STORAGE_KEY);
+    if (prev) {
+      const state = hydrateFromUnknown(JSON.parse(prev));
+      persistState(state);
+      return { state };
+    }
+  } catch {
+    /* fall through */
   }
 
   try {
@@ -29,19 +35,15 @@ export function loadState(): { state: AppState; recovered: boolean; error?: stri
         selectedMonth: readJson("selectedMonth", new Date().getMonth()),
         selectedYear: readJson("selectedYear", new Date().getFullYear()),
       };
-      const state = migrateLegacyPayload(payload);
+      const state = migrateLegacy(payload);
       persistState(state);
-      return { state, recovered: false };
+      return { state };
     }
   } catch {
-    return {
-      state: createEmptyState(),
-      recovered: true,
-      error: "Could not migrate the previous budget data. A new budget was created.",
-    };
+    return { state: createEmptyState(), error: "Could not migrate previous budget data." };
   }
 
-  return { state: createEmptyState(), recovered: false };
+  return { state: createEmptyState() };
 }
 
 function readJson<T>(key: string, fallback: T): T {
@@ -58,7 +60,7 @@ export function persistState(state: AppState): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
-    // Quota or private mode — UI can still function in-memory.
+    /* private mode / quota */
   }
 }
 
@@ -67,26 +69,5 @@ export function writeEmergencyBackup(state: AppState): void {
     localStorage.setItem(`${STORAGE_KEY}:pre-import`, JSON.stringify({ at: new Date().toISOString(), state }));
   } catch {
     /* ignore */
-  }
-}
-
-export function readEmergencyBackup(): AppState | null {
-  try {
-    const raw = localStorage.getItem(`${STORAGE_KEY}:pre-import`);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return hydrateFromUnknown(parsed.state ?? parsed);
-  } catch {
-    return null;
-  }
-}
-
-export function clearLegacyKeys(): void {
-  for (const key of LEGACY_KEYS) {
-    try {
-      localStorage.removeItem(key);
-    } catch {
-      /* ignore */
-    }
   }
 }

@@ -1,121 +1,84 @@
 import { useState } from "react";
 import { useStore } from "../store";
-import { Button, Card, Empty, Field, FREQ_OPTIONS, Money, StatusPill } from "../components/ui";
+import { Button, Card, Empty, Field, FREQ_OPTIONS, Money } from "../components/ui";
 import { Modal } from "../components/Layout";
-import { incomeOccurrences, mainIncomeSource } from "../lib/calculations";
-import { formatNiceDate, monthBounds, todayYmd } from "../lib/dates";
 import { createId } from "../lib/ids";
 import { stamp } from "../lib/defaults";
-import { parseDollarsToCents } from "../lib/money";
-import type { IncomeSource } from "../lib/types";
+import { formCents, formValue } from "../lib/money";
+import { FREQUENCY_LABEL, type Frequency, type IncomeSource } from "../lib/types";
+import { formatNiceDate, todayYmd } from "../lib/dates";
+import type { PageId } from "../components/Layout";
 
-export function IncomePage() {
-  const { state, saveIncome, removeIncome, markIncomeReceived, skipOccurrence, updateSettings, locked } = useStore();
-  const today = todayYmd();
-  const { startYmd, endYmd } = monthBounds(state.currentMonth);
-  const items = incomeOccurrences(state, startYmd, endYmd, today);
+export function IncomePage({ onPage, onAdd }: { onPage: (id: PageId) => void; onAdd: () => void }) {
+  const { state, saveIncome, removeIncome, updateSettings } = useStore();
   const [edit, setEdit] = useState<Partial<IncomeSource> | null>(null);
-  const [receive, setReceive] = useState<{ id: string; date: string; amount: string } | null>(null);
-  const main = mainIncomeSource(state);
+  const upcoming = state.incomeSources.filter((i) => i.active).slice().sort((a, b) => a.nextDate.localeCompare(b.nextDate));
 
   return (
     <div className="stack">
       <div className="between">
-        <p className="muted">Recurring paychecks generate expected dates. Mark received to turn them into transactions.</p>
-        <Button variant="primary" disabled={locked} onClick={() => setEdit({ name: "", amountCents: 0, frequency: "biweekly", nextDate: today, startDate: today, endDate: null, active: true, notes: "", accountId: state.accounts[0]?.id ?? null })}>Add income</Button>
+        <p className="muted">Expected vs actual can differ. Record the real deposit, then assign it with Budget this paycheck.</p>
+        <div className="wrap">
+          <Button onClick={() => onPage("paycheck")}>Budget this paycheck</Button>
+          <Button variant="primary" onClick={() => setEdit({ name: "", expectedCents: 0, frequency: "biweekly", nextDate: todayYmd(), secondDay: 15, active: true, notes: "" })}>Add income</Button>
+        </div>
       </div>
       <Card>
-        <h2>This month</h2>
-        {items.length === 0 ? <Empty title="No expected income this month" /> : items.map((i) => (
-          <div key={i.key} className="item">
-            <div>
-              <div className="name">{i.name}</div>
-              <div className="tiny muted">{formatNiceDate(i.date)}</div>
-            </div>
-            <div className="row">
-              <StatusPill status={i.status} />
-              <Money cents={i.amountCents} />
-              {i.status !== "received" && i.status !== "skipped" ? (
-                <>
-                  <Button variant="primary" disabled={locked} onClick={() => setReceive({ id: i.sourceId, date: i.date, amount: (i.amountCents / 100).toFixed(2) })}>Mark received</Button>
-                  <Button variant="ghost" disabled={locked} onClick={() => skipOccurrence("income", i.sourceId, i.date)}>Skip</Button>
-                </>
-              ) : null}
-            </div>
-          </div>
-        ))}
-      </Card>
-      <Card>
-        <h2>Income sources</h2>
-        <Field label="Primary paycheck for planning">
-          <select className="input" value={state.settings.paycheckIncomeId || main?.id || ""} onChange={(e) => updateSettings({ paycheckIncomeId: e.target.value || null })}>
-            <option value="">Largest repeating source</option>
-            {state.incomeSources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </Field>
-        {state.incomeSources.length === 0 ? <Empty title="No income sources" /> : state.incomeSources.map((s) => (
+        <h2>Upcoming expected income</h2>
+        {upcoming.length === 0 ? <Empty title="No income sources" /> : upcoming.map((s) => (
           <div key={s.id} className="item">
             <div>
-              <div className="name">{s.name} {s.active ? "" : "(inactive)"}</div>
-              <div className="tiny muted">{s.frequency} · next {s.nextDate}</div>
+              <div className="name">{s.name}</div>
+              <div className="tiny muted">{FREQUENCY_LABEL[s.frequency]} · next {formatNiceDate(s.nextDate)}</div>
             </div>
             <div className="row">
-              <Money cents={s.amountCents} />
+              <Money cents={s.expectedCents} />
+              <Button variant="small" onClick={() => onAdd()}>Record</Button>
               <Button variant="small" onClick={() => setEdit(s)}>Edit</Button>
-              <Button variant="small" className="danger" onClick={() => removeIncome(s.id)}>Delete</Button>
+              <Button variant="small" onClick={() => removeIncome(s.id)}>Delete</Button>
             </div>
           </div>
         ))}
       </Card>
+      <Field label="Primary paycheck for recommendations">
+        <select className="input" value={state.settings.paycheckIncomeId || ""} onChange={(e) => updateSettings({ paycheckIncomeId: e.target.value || null })}>
+          <option value="">Largest repeating source</option>
+          {state.incomeSources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </Field>
       <Modal open={!!edit} title="Income source" onClose={() => setEdit(null)}>
         {edit ? (
           <form className="form-grid" onSubmit={(ev) => {
             ev.preventDefault();
+            const form = ev.currentTarget;
+            const frequency = (formValue(form, "frequency") as Frequency) || "monthly";
             saveIncome({
               id: edit.id || createId("inc"),
-              name: edit.name || "Income",
-              amountCents: edit.amountCents || 0,
-              frequency: edit.frequency || "monthly",
-              nextDate: edit.nextDate || today,
-              startDate: edit.startDate || edit.nextDate || today,
-              endDate: edit.endDate || null,
-              active: edit.active !== false,
-              notes: edit.notes || "",
-              accountId: edit.accountId || null,
+              name: formValue(form, "name") || "Income",
+              expectedCents: formCents(form, "expected"),
+              frequency,
+              nextDate: formValue(form, "nextDate") || todayYmd(),
+              secondDay: frequency === "twice_monthly" ? Number(formValue(form, "secondDay") || 15) : null,
+              active: (form.elements.namedItem("active") as HTMLInputElement | null)?.checked !== false,
+              notes: formValue(form, "notes"),
               ...stamp(),
             });
             setEdit(null);
           }}>
-            <Field label="Name" className="full"><input className="input" value={edit.name || ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} required /></Field>
-            <Field label="Amount"><input className="input" inputMode="decimal" defaultValue={((edit.amountCents || 0) / 100).toFixed(2)} onBlur={(e) => setEdit({ ...edit, amountCents: parseDollarsToCents(e.target.value) })} /></Field>
+            <Field label="Name" className="full"><input className="input" name="name" defaultValue={edit.name || ""} required /></Field>
+            <Field label="Expected amount"><input className="input" name="expected" inputMode="decimal" defaultValue={((edit.expectedCents || 0) / 100).toFixed(2)} /></Field>
             <Field label="Frequency">
-              <select className="input" value={edit.frequency || "monthly"} onChange={(e) => setEdit({ ...edit, frequency: e.target.value as IncomeSource["frequency"] })}>
+              <select className="input" name="frequency" defaultValue={edit.frequency || "monthly"} onChange={(e) => setEdit((cur) => cur ? { ...cur, frequency: e.target.value as Frequency } : cur)}>
                 {FREQ_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
-            <Field label="Next / start date"><input className="input" type="date" value={edit.nextDate || ""} onChange={(e) => setEdit({ ...edit, nextDate: e.target.value, startDate: e.target.value })} /></Field>
-            <Field label="End date"><input className="input" type="date" value={edit.endDate || ""} onChange={(e) => setEdit({ ...edit, endDate: e.target.value || null })} /></Field>
-            <Field label="Deposit account">
-              <select className="input" value={edit.accountId || ""} onChange={(e) => setEdit({ ...edit, accountId: e.target.value || null })}>
-                <option value="">None</option>
-                {state.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </Field>
-            <label className="field"><input type="checkbox" checked={edit.active !== false} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} /> Active</label>
-            <Field label="Notes" className="full"><textarea className="input" value={edit.notes || ""} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} /></Field>
+            <Field label="Next expected date"><input className="input" name="nextDate" type="date" defaultValue={edit.nextDate || ""} /></Field>
+            {edit.frequency === "twice_monthly" ? (
+              <Field label="Second day of month"><input className="input" name="secondDay" type="number" min={1} max={28} defaultValue={edit.secondDay ?? 15} /></Field>
+            ) : null}
+            <label className="field"><input type="checkbox" name="active" defaultChecked={edit.active !== false} /> Active</label>
+            <Field label="Notes" className="full"><textarea className="input" name="notes" defaultValue={edit.notes || ""} /></Field>
             <div className="full row" style={{ justifyContent: "flex-end" }}><Button type="submit" variant="primary">Save</Button></div>
-          </form>
-        ) : null}
-      </Modal>
-      <Modal open={!!receive} title="Mark income received" onClose={() => setReceive(null)}>
-        {receive ? (
-          <form className="stack" onSubmit={(ev) => {
-            ev.preventDefault();
-            markIncomeReceived(receive.id, receive.date, parseDollarsToCents(receive.amount), state.incomeSources.find((s) => s.id === receive.id)?.accountId ?? null);
-            setReceive(null);
-          }}>
-            <Field label="Amount received"><input className="input" value={receive.amount} onChange={(e) => setReceive({ ...receive, amount: e.target.value })} /></Field>
-            <Button type="submit" variant="primary">Convert to transaction</Button>
           </form>
         ) : null}
       </Modal>

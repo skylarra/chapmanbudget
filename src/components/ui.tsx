@@ -1,6 +1,7 @@
-import React from "react";
 import { formatMoney, formatPercent, type Cents } from "../lib/money";
+import { FREQUENCY_LABEL, type Frequency } from "../lib/types";
 import { useStore } from "../store";
+import type { ReactNode } from "react";
 
 export function Money({ cents, signed = false, className = "" }: { cents: Cents; signed?: boolean; className?: string }) {
   const { state } = useStore();
@@ -8,7 +9,7 @@ export function Money({ cents, signed = false, className = "" }: { cents: Cents;
   return <span className={cls}>{formatMoney(cents, { currency: state.settings.currency, locale: state.settings.locale, signed })}</span>;
 }
 
-export function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <section className={`card ${className}`}>{children}</section>;
 }
 
@@ -30,24 +31,22 @@ export function Button({
   variant = "default",
   type = "button",
   disabled,
-  className = "",
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   onClick?: () => void;
   variant?: "default" | "primary" | "danger" | "ghost" | "small";
   type?: "button" | "submit";
   disabled?: boolean;
-  className?: string;
 }) {
   const extra = variant === "default" ? "" : variant === "small" ? "small" : variant;
   return (
-    <button type={type} className={`btn ${extra} ${className}`} onClick={onClick} disabled={disabled}>
+    <button type={type} className={`btn ${extra}`} onClick={onClick} disabled={disabled}>
       {children}
     </button>
   );
 }
 
-export function Field({ label, children, className = "" }: { label: string; children: React.ReactNode; className?: string }) {
+export function Field({ label, children, className = "" }: { label: string; children: ReactNode; className?: string }) {
   return (
     <label className={`field ${className}`}>
       {label}
@@ -56,7 +55,7 @@ export function Field({ label, children, className = "" }: { label: string; chil
   );
 }
 
-export function Pill({ children, tone = "" }: { children: React.ReactNode; tone?: "good" | "warn" | "bad" | "info" | "" }) {
+export function Pill({ children, tone = "" }: { children: ReactNode; tone?: "good" | "warn" | "bad" | "" }) {
   return <span className={`pill ${tone}`}>{children}</span>;
 }
 
@@ -65,7 +64,7 @@ export function Progress({ value, max }: { value: number; max: number }) {
   const over = max > 0 && value > max;
   return (
     <div className={`progress ${over ? "over" : ""}`} role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
-      <span style={{ width: `${pct}%` }} />
+      <span style={{ width: `${over ? 100 : pct}%` }} />
     </div>
   );
 }
@@ -79,20 +78,11 @@ export function Empty({ title, hint }: { title: string; hint?: string }) {
   );
 }
 
-export function StatusPill({ status }: { status: string }) {
-  const tone = status === "paid" || status === "received" ? "good" : status === "overdue" || status === "late" ? "bad" : status === "due" ? "warn" : "info";
-  return <Pill tone={tone}>{status.replace("_", " ")}</Pill>;
-}
-
 export function Percent({ value }: { value: number }) {
   return <span>{formatPercent(value)}</span>;
 }
 
-export const FREQ_OPTIONS = [
-  { value: "once", label: "One-time" },
-  { value: "weekly", label: "Weekly" },
-  { value: "biweekly", label: "Bi-weekly" },
-  { value: "monthly", label: "Monthly" },
-  { value: "quarterly", label: "Quarterly" },
-  { value: "annually", label: "Annually" },
-];
+export const FREQ_OPTIONS = (Object.keys(FREQUENCY_LABEL) as Frequency[]).map((value) => ({
+  value,
+  label: FREQUENCY_LABEL[value],
+}));
